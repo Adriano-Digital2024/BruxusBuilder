@@ -383,6 +383,13 @@ export const Menu = () => {
                 <span className={selectionMode ? 'i-ph:x h-4 w-4' : 'i-ph:check-square h-4 w-4'} />
               </button>
             </div>
+            <a
+              href="/voice-funnel"
+              className="flex gap-2 items-center justify-center bg-gradient-to-r from-purple-600 to-indigo-600 text-white hover:from-purple-700 hover:to-indigo-700 rounded-lg px-4 py-2.5 transition-colors shadow-md shadow-purple-500/10"
+            >
+              <span className="inline-block i-ph:microphone h-4 w-4" />
+              <span className="text-sm font-semibold">Funil por Voz 🎙️</span>
+            </a>
             <div className="relative w-full">
               <div className="absolute left-3 top-1/2 -translate-y-1/2">
                 <span className="i-ph:magnifying-glass h-4 w-4 text-gray-400 dark:text-gray-500" />
