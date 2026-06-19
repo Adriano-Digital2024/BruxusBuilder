@@ -64,6 +64,26 @@ app.post('/api/sandbox/create', async (req, res) => {
   }
 
   try {
+    // Check if a sandbox already exists for this project
+    const existingId = projects.get(pid);
+    if (existingId) {
+      try {
+        const existing = await daytona.get(existingId);
+        if (existing && existing.state !== 'destroyed') {
+          console.log(`Reusing existing sandbox ${existingId} for project ${pid}`);
+          return res.json({
+            sandboxId: existing.id,
+            projectId: pid,
+            status: existing.state || 'started',
+            createdAt: existing.createdAt || new Date().toISOString(),
+          });
+        }
+      } catch {
+        // Existing sandbox no longer valid — remove from map and create new
+        projects.delete(pid);
+      }
+    }
+
     const sandbox = await daytona.create({
       language: 'typescript',
       autoStopInterval: 60,

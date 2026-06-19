@@ -31,6 +31,17 @@ if (!import.meta.env.SSR) {
     createSandbox(DEFAULT_PROJECT_ID).then((sandbox) => {
       webcontainerContext.loaded = true;
 
+      window.addEventListener('beforeunload', () => {
+        const body = new Blob(
+          [JSON.stringify({ projectId: sandbox.projectId })],
+          { type: 'application/json' },
+        );
+        navigator.sendBeacon(
+          `${import.meta.env.VITE_BACKEND_URL || ''}/api/sandbox/destroy`,
+          body,
+        );
+      });
+
       return {
         workdir: WORK_DIR,
         sandboxId: sandbox.sandboxId,
