@@ -55,6 +55,13 @@ export async function getSandboxPreviewUrl(projectId: string): Promise<{ preview
   return sandboxFetch<{ previewUrl: string }>(`/preview?projectId=${encodeURIComponent(projectId)}`);
 }
 
+export async function deleteFileFromSandbox(
+  projectId: string,
+  filePath: string,
+): Promise<SandboxResult> {
+  return sandboxFetch<SandboxResult>('/delete', { projectId, path: filePath });
+}
+
 export async function destroySandbox(projectId: string): Promise<{ success: boolean }> {
   return sandboxFetch<{ success: boolean }>('/destroy', { projectId });
 }

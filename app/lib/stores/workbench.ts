@@ -562,8 +562,8 @@ export class WorkbenchStore {
     }
 
     if (data.action.type === 'file') {
-      const wc = await webcontainer;
-      const fullPath = path.join(wc.workdir, data.action.filePath);
+      const sandbox = await webcontainer;
+      const fullPath = path.join(sandbox.workdir, data.action.filePath);
 
       /*
        * For scoped locks, we would need to implement diff checking here

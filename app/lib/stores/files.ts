@@ -1,10 +1,6 @@
-import type { PathWatcherEvent, WebContainer } from '@webcontainer/api';
-import { getEncoding } from 'istextorbinary';
 import { map, type MapStore } from 'nanostores';
 import { Buffer } from 'node:buffer';
 import { path } from '~/utils/path';
-import { bufferWatchEvents } from '~/utils/buffer';
-import { WORK_DIR } from '~/utils/constants';
 import { computeFileModifications } from '~/utils/diff';
 import { createScopedLogger } from '~/utils/logger';
 import { unreachable } from '~/utils/unreachable';
@@ -21,10 +17,12 @@ import {
   clearCache,
 } from '~/lib/persistence/lockedFiles';
 import { getCurrentChatId } from '~/utils/fileLocks';
+import {
+  writeFileToSandbox,
+  deleteFileFromSandbox,
+} from '~/lib/sandbox-service';
 
 const logger = createScopedLogger('FilesStore');
-
-const utf8TextDecoder = new TextDecoder('utf8', { fatal: true });
 
 export interface File {
   type: 'file';
@@ -45,7 +43,7 @@ type Dirent = File | Folder;
 export type FileMap = Record<string, Dirent | undefined>;
 
 export class FilesStore {
-  #webcontainer: Promise<WebContainer>;
+  #sandboxProxy: Promise<{ workdir: string; sandboxId: string; projectId: string }>;
 
   /**
    * Tracks the number of files without folders.
@@ -73,8 +71,8 @@ export class FilesStore {
     return this.#size;
   }
 
-  constructor(webcontainerPromise: Promise<WebContainer>) {
-    this.#webcontainer = webcontainerPromise;
+  constructor(sandboxProxyPromise: Promise<{ workdir: string; sandboxId: string; projectId: string }>) {
+    this.#sandboxProxy = sandboxProxyPromise;
 
     // Load deleted paths from localStorage if available
     try {
@@ -548,10 +546,10 @@ export class FilesStore {
   }
 
   async saveFile(filePath: string, content: string) {
-    const webcontainer = await this.#webcontainer;
+    const sandbox = await this.#sandboxProxy;
 
     try {
-      const relativePath = path.relative(webcontainer.workdir, filePath);
+      const relativePath = path.relative(sandbox.workdir, filePath);
 
       if (!relativePath) {
         throw new Error(`EINVAL: invalid file path, write '${relativePath}'`);
@@ -563,7 +561,7 @@ export class FilesStore {
         unreachable('Expected content to be defined');
       }
 
-      await webcontainer.fs.writeFile(relativePath, content);
+      await writeFileToSandbox(sandbox.projectId, relativePath, content);
 
       if (!this.#modifiedFiles.has(filePath)) {
         this.#modifiedFiles.set(filePath, oldContent);
@@ -590,20 +588,10 @@ export class FilesStore {
   }
 
   async #init() {
-    const webcontainer = await this.#webcontainer;
-
     // Clean up any files that were previously deleted
     this.#cleanupDeletedFiles();
 
-    // Set up file watcher
-    webcontainer.internal.watchPaths(
-      {
-        include: [`${WORK_DIR}/**`],
-        exclude: ['**/node_modules', '.git', '**/package-lock.json'],
-        includeContent: true,
-      },
-      bufferWatchEvents(100, this.#processEventBuffer.bind(this)),
-    );
+    // File watcher replaced by sandbox backend — polling to be implemented in a future task
 
     // Get the current chat ID
     const currentChatId = getCurrentChatId();
@@ -693,100 +681,22 @@ export class FilesStore {
     }
   }
 
-  #processEventBuffer(events: Array<[events: PathWatcherEvent[]]>) {
-    const watchEvents = events.flat(2);
-
-    for (const { type, path, buffer } of watchEvents) {
-      // remove any trailing slashes
-      const sanitizedPath = path.replace(/\/+$/g, '');
-
-      switch (type) {
-        case 'add_dir': {
-          // we intentionally add a trailing slash so we can distinguish files from folders in the file tree
-          this.files.setKey(sanitizedPath, { type: 'folder' });
-          break;
-        }
-        case 'remove_dir': {
-          this.files.setKey(sanitizedPath, undefined);
-
-          for (const [direntPath] of Object.entries(this.files)) {
-            if (direntPath.startsWith(sanitizedPath)) {
-              this.files.setKey(direntPath, undefined);
-            }
-          }
-
-          break;
-        }
-        case 'add_file':
-        case 'change': {
-          if (type === 'add_file') {
-            this.#size++;
-          }
-
-          let content = '';
-
-          /**
-           * @note This check is purely for the editor. The way we detect this is not
-           * bullet-proof and it's a best guess so there might be false-positives.
-           * The reason we do this is because we don't want to display binary files
-           * in the editor nor allow to edit them.
-           */
-          const isBinary = isBinaryFile(buffer);
-
-          if (!isBinary) {
-            content = this.#decodeFileContent(buffer);
-          }
-
-          this.files.setKey(sanitizedPath, { type: 'file', content, isBinary });
-
-          break;
-        }
-        case 'remove_file': {
-          this.#size--;
-          this.files.setKey(sanitizedPath, undefined);
-          break;
-        }
-        case 'update_directory': {
-          // we don't care about these events
-          break;
-        }
-      }
-    }
-  }
-
-  #decodeFileContent(buffer?: Uint8Array) {
-    if (!buffer || buffer.byteLength === 0) {
-      return '';
-    }
-
-    try {
-      return utf8TextDecoder.decode(buffer);
-    } catch (error) {
-      console.log(error);
-      return '';
-    }
-  }
+  // method to persist deleted paths to localStorage
 
   async createFile(filePath: string, content: string | Uint8Array = '') {
-    const webcontainer = await this.#webcontainer;
+    const sandbox = await this.#sandboxProxy;
 
     try {
-      const relativePath = path.relative(webcontainer.workdir, filePath);
+      const relativePath = path.relative(sandbox.workdir, filePath);
 
       if (!relativePath) {
         throw new Error(`EINVAL: invalid file path, create '${relativePath}'`);
       }
 
-      const dirPath = path.dirname(relativePath);
-
-      if (dirPath !== '.') {
-        await webcontainer.fs.mkdir(dirPath, { recursive: true });
-      }
-
       const isBinary = content instanceof Uint8Array;
 
       if (isBinary) {
-        await webcontainer.fs.writeFile(relativePath, Buffer.from(content));
+        await writeFileToSandbox(sandbox.projectId, relativePath, Buffer.from(content).toString('base64'));
 
         const base64Content = Buffer.from(content).toString('base64');
         this.files.setKey(filePath, {
@@ -799,7 +709,7 @@ export class FilesStore {
         this.#modifiedFiles.set(filePath, base64Content);
       } else {
         const contentToWrite = (content as string).length === 0 ? ' ' : content;
-        await webcontainer.fs.writeFile(relativePath, contentToWrite);
+        await writeFileToSandbox(sandbox.projectId, relativePath, contentToWrite);
 
         this.files.setKey(filePath, {
           type: 'file',
@@ -821,17 +731,9 @@ export class FilesStore {
   }
 
   async createFolder(folderPath: string) {
-    const webcontainer = await this.#webcontainer;
-
     try {
-      const relativePath = path.relative(webcontainer.workdir, folderPath);
-
-      if (!relativePath) {
-        throw new Error(`EINVAL: invalid folder path, create '${relativePath}'`);
-      }
-
-      await webcontainer.fs.mkdir(relativePath, { recursive: true });
-
+      // Folders are created implicitly by the sandbox backend when files are written.
+      // We only track the folder locally in the file map.
       this.files.setKey(folderPath, { type: 'folder' });
 
       logger.info(`Folder created: ${folderPath}`);
@@ -844,16 +746,16 @@ export class FilesStore {
   }
 
   async deleteFile(filePath: string) {
-    const webcontainer = await this.#webcontainer;
+    const sandbox = await this.#sandboxProxy;
 
     try {
-      const relativePath = path.relative(webcontainer.workdir, filePath);
+      const relativePath = path.relative(sandbox.workdir, filePath);
 
       if (!relativePath) {
         throw new Error(`EINVAL: invalid file path, delete '${relativePath}'`);
       }
 
-      await webcontainer.fs.rm(relativePath);
+      await deleteFileFromSandbox(sandbox.projectId, relativePath);
 
       this.#deletedPaths.add(filePath);
 
@@ -876,16 +778,16 @@ export class FilesStore {
   }
 
   async deleteFolder(folderPath: string) {
-    const webcontainer = await this.#webcontainer;
+    const sandbox = await this.#sandboxProxy;
 
     try {
-      const relativePath = path.relative(webcontainer.workdir, folderPath);
+      const relativePath = path.relative(sandbox.workdir, folderPath);
 
       if (!relativePath) {
         throw new Error(`EINVAL: invalid folder path, delete '${relativePath}'`);
       }
 
-      await webcontainer.fs.rm(relativePath, { recursive: true });
+      await deleteFileFromSandbox(sandbox.projectId, relativePath);
 
       this.#deletedPaths.add(folderPath);
 
@@ -930,22 +832,4 @@ export class FilesStore {
       logger.error('Failed to persist deleted paths to localStorage', error);
     }
   }
-}
-
-function isBinaryFile(buffer: Uint8Array | undefined) {
-  if (buffer === undefined) {
-    return false;
-  }
-
-  return getEncoding(convertToBuffer(buffer), { chunkLength: 100 }) === 'binary';
-}
-
-/**
- * Converts a `Uint8Array` into a Node.js `Buffer` by copying the prototype.
- * The goal is to  avoid expensive copies. It does create a new typed array
- * but that's generally cheap as long as it uses the same underlying
- * array buffer.
- */
-function convertToBuffer(view: Uint8Array): Buffer {
-  return Buffer.from(view.buffer, view.byteOffset, view.byteLength);
 }
