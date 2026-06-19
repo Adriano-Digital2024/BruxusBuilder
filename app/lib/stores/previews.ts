@@ -1,12 +1,7 @@
-import type { WebContainer } from '@webcontainer/api';
 import { atom } from 'nanostores';
+import { getSandboxPreviewUrl } from '~/lib/sandbox-service';
 
-// Extend Window interface to include our custom property
-declare global {
-  interface Window {
-    _tabId?: string;
-  }
-}
+const DEFAULT_PROJECT_ID = 'bruxus-dev-project';
 
 export interface PreviewInfo {
   port: number;
@@ -14,12 +9,11 @@ export interface PreviewInfo {
   baseUrl: string;
 }
 
-// Create a broadcast channel for preview updates
 const PREVIEW_CHANNEL = 'preview-updates';
 
 export class PreviewsStore {
   #availablePreviews = new Map<number, PreviewInfo>();
-  #webcontainer: Promise<WebContainer>;
+  #projectId = DEFAULT_PROJECT_ID;
   #broadcastChannel?: BroadcastChannel;
   #lastUpdate = new Map<string, number>();
   #watchedFiles = new Set<string>();
@@ -29,13 +23,15 @@ export class PreviewsStore {
 
   previews = atom<PreviewInfo[]>([]);
 
-  constructor(webcontainerPromise: Promise<WebContainer>) {
-    this.#webcontainer = webcontainerPromise;
+  constructor(sandboxProxyPromise: Promise<{ workdir: string; sandboxId: string; projectId: string }>) {
+    sandboxProxyPromise.then((s) => {
+      this.#projectId = s.projectId;
+    });
+
     this.#broadcastChannel = this.#maybeCreateChannel(PREVIEW_CHANNEL);
     this.#storageChannel = this.#maybeCreateChannel('storage-sync-channel');
 
     if (this.#broadcastChannel) {
-      // Listen for preview updates from other tabs
       this.#broadcastChannel.onmessage = (event) => {
         const { type, previewId } = event.data;
 
@@ -52,7 +48,6 @@ export class PreviewsStore {
     }
 
     if (this.#storageChannel) {
-      // Listen for storage sync messages
       this.#storageChannel.onmessage = (event) => {
         const { storage, source } = event.data;
 
@@ -62,7 +57,6 @@ export class PreviewsStore {
       };
     }
 
-    // Override localStorage setItem to catch all changes
     if (typeof window !== 'undefined') {
       const originalSetItem = localStorage.setItem;
 
@@ -98,7 +92,6 @@ export class PreviewsStore {
     }
   }
 
-  // Generate a unique ID for this tab
   private _getTabId(): string {
     if (typeof window !== 'undefined') {
       if (!window._tabId) {
@@ -111,7 +104,6 @@ export class PreviewsStore {
     return '';
   }
 
-  // Sync storage data between tabs
   private _syncStorage(storage: Record<string, string>) {
     if (typeof window !== 'undefined') {
       Object.entries(storage).forEach(([key, value]) => {
@@ -123,7 +115,6 @@ export class PreviewsStore {
         }
       });
 
-      // Force a refresh after syncing storage
       const previews = this.previews.get();
       previews.forEach((preview) => {
         const previewId = this.getPreviewId(preview.baseUrl);
@@ -133,7 +124,6 @@ export class PreviewsStore {
         }
       });
 
-      // Reload the page content
       if (typeof window !== 'undefined' && window.location) {
         const iframe = document.querySelector('iframe');
 
@@ -144,7 +134,6 @@ export class PreviewsStore {
     }
   }
 
-  // Broadcast storage state to other tabs
   private _broadcastStorageSync() {
     if (typeof window !== 'undefined') {
       const storage: Record<string, string> = {};
@@ -167,54 +156,28 @@ export class PreviewsStore {
   }
 
   async #init() {
-    const webcontainer = await this.#webcontainer;
+    try {
+      const { previewUrl } = await getSandboxPreviewUrl(this.#projectId);
 
-    // Listen for server ready events
-    webcontainer.on('server-ready', (port, url) => {
-      console.log('[Preview] Server ready on port:', port, url);
-      this.broadcastUpdate(url);
-
-      // Initial storage sync when preview is ready
-      this._broadcastStorageSync();
-    });
-
-    // Listen for port events
-    webcontainer.on('port', (port, type, url) => {
-      let previewInfo = this.#availablePreviews.get(port);
-
-      if (type === 'close' && previewInfo) {
-        this.#availablePreviews.delete(port);
-        this.previews.set(this.previews.get().filter((preview) => preview.port !== port));
-
-        return;
+      if (previewUrl) {
+        const previewInfo: PreviewInfo = { port: 3000, ready: true, baseUrl: previewUrl };
+        this.#availablePreviews.set(3000, previewInfo);
+        this.previews.set([previewInfo]);
+        this.broadcastUpdate(previewUrl);
       }
-
-      const previews = this.previews.get();
-
-      if (!previewInfo) {
-        previewInfo = { port, ready: type === 'open', baseUrl: url };
-        this.#availablePreviews.set(port, previewInfo);
-        previews.push(previewInfo);
-      }
-
-      previewInfo.ready = type === 'open';
-      previewInfo.baseUrl = url;
-
-      this.previews.set([...previews]);
-
-      if (type === 'open') {
-        this.broadcastUpdate(url);
-      }
-    });
+    } catch (error) {
+      console.warn('[Preview] Failed to fetch sandbox preview URL:', error);
+    }
   }
 
-  // Helper to extract preview ID from URL
   getPreviewId(url: string): string | null {
-    const match = url.match(/^https?:\/\/([^.]+)\.local-credentialless\.webcontainer-api\.io/);
-    return match ? match[1] : null;
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return null;
+    }
   }
 
-  // Broadcast state change to all tabs
   broadcastStateChange(previewId: string) {
     const timestamp = Date.now();
     this.#lastUpdate.set(previewId, timestamp);
@@ -226,7 +189,6 @@ export class PreviewsStore {
     });
   }
 
-  // Broadcast file change to all tabs
   broadcastFileChange(previewId: string) {
     const timestamp = Date.now();
     this.#lastUpdate.set(previewId, timestamp);
@@ -238,7 +200,6 @@ export class PreviewsStore {
     });
   }
 
-  // Broadcast update to all tabs
   broadcastUpdate(url: string) {
     const previewId = this.getPreviewId(url);
 
@@ -254,16 +215,13 @@ export class PreviewsStore {
     }
   }
 
-  // Method to refresh a specific preview
   refreshPreview(previewId: string) {
-    // Clear any pending refresh for this preview
     const existingTimeout = this.#refreshTimeouts.get(previewId);
 
     if (existingTimeout) {
       clearTimeout(existingTimeout);
     }
 
-    // Set a new timeout for this refresh
     const timeout = setTimeout(() => {
       const previews = this.previews.get();
       const preview = previews.find((p) => this.getPreviewId(p.baseUrl) === previewId);
@@ -297,16 +255,13 @@ export class PreviewsStore {
   }
 }
 
-// Create a singleton instance
 let previewsStore: PreviewsStore | null = null;
 
 export function usePreviewStore() {
   if (!previewsStore) {
-    /*
-     * Initialize with a Promise that resolves to WebContainer
-     * This should match how you're initializing WebContainer elsewhere
-     */
-    previewsStore = new PreviewsStore(Promise.resolve({} as WebContainer));
+    previewsStore = new PreviewsStore(
+      Promise.resolve({ workdir: '/home/project', sandboxId: '', projectId: DEFAULT_PROJECT_ID }),
+    );
   }
 
   return previewsStore;

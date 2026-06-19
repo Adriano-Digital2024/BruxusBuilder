@@ -1,8 +1,5 @@
 import { useState, useMemo, useCallback, useEffect } from 'react';
-import type { TextSearchOptions, TextSearchOnProgressCallback, WebContainer } from '@webcontainer/api';
 import { workbenchStore } from '~/lib/stores/workbench';
-import { webcontainer } from '~/lib/webcontainer';
-import { WORK_DIR } from '~/utils/constants';
 import { debounce } from '~/utils/debounce';
 
 interface DisplayMatch {
@@ -11,66 +8,6 @@ interface DisplayMatch {
   previewText: string;
   matchCharStart: number;
   matchCharEnd: number;
-}
-
-async function performTextSearch(
-  instance: WebContainer,
-  query: string,
-  options: Omit<TextSearchOptions, 'folders'>,
-  onProgress: (results: DisplayMatch[]) => void,
-): Promise<void> {
-  if (!instance || typeof instance.internal?.textSearch !== 'function') {
-    console.error('WebContainer instance not available or internal searchText method is missing/not a function.');
-
-    return;
-  }
-
-  const searchOptions: TextSearchOptions = {
-    ...options,
-    folders: [WORK_DIR],
-  };
-
-  const progressCallback: TextSearchOnProgressCallback = (filePath: any, apiMatches: any[]) => {
-    const displayMatches: DisplayMatch[] = [];
-
-    apiMatches.forEach((apiMatch: { preview: { text: string; matches: string | any[] }; ranges: any[] }) => {
-      const previewLines = apiMatch.preview.text.split('\n');
-
-      apiMatch.ranges.forEach((range: { startLineNumber: number; startColumn: any; endColumn: any }) => {
-        let previewLineText = '(Preview line not found)';
-        let lineIndexInPreview = -1;
-
-        if (apiMatch.preview.matches.length > 0) {
-          const previewStartLine = apiMatch.preview.matches[0].startLineNumber;
-          lineIndexInPreview = range.startLineNumber - previewStartLine;
-        }
-
-        if (lineIndexInPreview >= 0 && lineIndexInPreview < previewLines.length) {
-          previewLineText = previewLines[lineIndexInPreview];
-        } else {
-          previewLineText = previewLines[0] ?? '(Preview unavailable)';
-        }
-
-        displayMatches.push({
-          path: filePath,
-          lineNumber: range.startLineNumber,
-          previewText: previewLineText,
-          matchCharStart: range.startColumn,
-          matchCharEnd: range.endColumn,
-        });
-      });
-    });
-
-    if (displayMatches.length > 0) {
-      onProgress(displayMatches);
-    }
-  };
-
-  try {
-    await instance.internal.textSearch(query, searchOptions, progressCallback);
-  } catch (error) {
-    console.error('Error during internal text search:', error);
-  }
 }
 
 function groupResultsByFile(results: DisplayMatch[]): Record<string, DisplayMatch[]> {
@@ -113,7 +50,6 @@ export function Search() {
       setIsSearching(false);
       setExpandedFiles({});
       setHasSearched(false);
-
       return;
     }
 
@@ -122,40 +58,17 @@ export function Search() {
     setExpandedFiles({});
     setHasSearched(true);
 
-    const minLoaderTime = 300; // ms
+    const minLoaderTime = 300;
     const start = Date.now();
 
-    try {
-      const instance = await webcontainer;
-      const options: Omit<TextSearchOptions, 'folders'> = {
-        homeDir: WORK_DIR, // Adjust this path as needed
-        includes: ['**/*.*'],
-        excludes: ['**/node_modules/**', '**/package-lock.json', '**/.git/**', '**/dist/**', '**/*.lock'],
-        gitignore: true,
-        requireGit: false,
-        globalIgnoreFiles: true,
-        ignoreSymlinks: false,
-        resultLimit: 500,
-        isRegex: false,
-        caseSensitive: false,
-        isWordMatch: false,
-      };
+    // Text search is unavailable in remote sandbox mode.
+    // Future: connect to a backend search endpoint.
+    const elapsed = Date.now() - start;
 
-      const progressHandler = (batchResults: DisplayMatch[]) => {
-        setSearchResults((prevResults) => [...prevResults, ...batchResults]);
-      };
-
-      await performTextSearch(instance, query, options, progressHandler);
-    } catch (error) {
-      console.error('Failed to initiate search:', error);
-    } finally {
-      const elapsed = Date.now() - start;
-
-      if (elapsed < minLoaderTime) {
-        setTimeout(() => setIsSearching(false), minLoaderTime - elapsed);
-      } else {
-        setIsSearching(false);
-      }
+    if (elapsed < minLoaderTime) {
+      setTimeout(() => setIsSearching(false), minLoaderTime - elapsed);
+    } else {
+      setIsSearching(false);
     }
   }, []);
 
@@ -168,10 +81,6 @@ export function Search() {
   const handleResultClick = (filePath: string, line?: number) => {
     workbenchStore.setSelectedFile(filePath);
 
-    /*
-     * Adjust line number to be 0-based if it's defined
-     * The search results use 1-based line numbers, but CodeMirrorEditor expects 0-based
-     */
     const adjustedLine = typeof line === 'number' ? Math.max(0, line - 1) : undefined;
 
     workbenchStore.setCurrentDocumentScrollPosition({ line: adjustedLine, column: 0 });
@@ -179,7 +88,6 @@ export function Search() {
 
   return (
     <div className="flex flex-col h-full bg-bolt-elements-background-depth-2">
-      {/* Search Bar */}
       <div className="flex items-center py-3 px-3">
         <div className="relative flex-1">
           <input
@@ -192,7 +100,6 @@ export function Search() {
         </div>
       </div>
 
-      {/* Results */}
       <div className="flex-1 overflow-auto py-2">
         {isSearching && (
           <div className="flex items-center justify-center h-32 text-bolt-elements-textTertiary">
@@ -200,7 +107,12 @@ export function Search() {
           </div>
         )}
         {!isSearching && hasSearched && searchResults.length === 0 && searchQuery.trim() !== '' && (
-          <div className="flex items-center justify-center h-32 text-gray-500">No results found.</div>
+          <div className="flex items-center justify-center h-32 text-gray-500">Search unavailable in remote mode.</div>
+        )}
+        {!isSearching && !hasSearched && searchQuery.trim() === '' && (
+          <div className="flex items-center justify-center h-32 text-bolt-elements-textTertiary">
+            Enter a query to search files.
+          </div>
         )}
         {!isSearching &&
           Object.keys(groupedResults).map((file) => (
