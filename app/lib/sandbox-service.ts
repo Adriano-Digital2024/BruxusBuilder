@@ -15,7 +15,17 @@ export interface SandboxResult {
   error?: string;
 }
 
-const API_BASE = `${import.meta.env.VITE_BACKEND_URL || ''}/api/sandbox`;
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
+
+if (!BACKEND_URL) {
+  console.error(
+    '[sandbox-service] VITE_BACKEND_URL is not set. ' +
+    'All sandbox API calls will fail. ' +
+    'Set it to your backend URL, e.g. http://localhost:3000 or https://api.bruxus.me'
+  );
+}
+
+const API_BASE = `${BACKEND_URL || ''}/api/sandbox`;
 
 async function sandboxFetch<T>(endpoint: string, body?: Record<string, unknown>): Promise<T> {
   const response = await fetch(`${API_BASE}${endpoint}`, {

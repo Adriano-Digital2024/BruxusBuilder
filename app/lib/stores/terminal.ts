@@ -5,6 +5,17 @@ import { coloredText } from '~/utils/terminal';
 
 const DEFAULT_PROJECT_ID = 'bruxus-dev-project';
 
+function getWebSocketUrl() {
+  const backendUrl = import.meta.env.VITE_BACKEND_URL || '';
+  if (!backendUrl) {
+    console.error('[terminal] VITE_BACKEND_URL is not set. Terminal WebSocket will fail.');
+    return `ws://localhost:3000/terminal`;
+  }
+  const protocol = backendUrl.startsWith('https') ? 'wss' : 'ws';
+  const host = backendUrl.replace(/^https?:\/\//, '');
+  return `${protocol}://${host}/terminal`;
+}
+
 interface SandboxProxy {
   workdir: string;
   sandboxId: string;
@@ -44,7 +55,7 @@ export class TerminalStore {
       const sandbox = await this.#sandboxProxy;
       await this.#boltTerminal.init();
 
-      const wsUrl = `ws://localhost:3000/terminal?projectId=${encodeURIComponent(sandbox.projectId)}`;
+      const wsUrl = `${getWebSocketUrl()}?projectId=${encodeURIComponent(sandbox.projectId)}`;
       const socket = new WebSocket(wsUrl);
 
       socket.onopen = () => {
@@ -79,7 +90,7 @@ export class TerminalStore {
     try {
       const sandbox = await this.#sandboxProxy;
 
-      const wsUrl = `ws://localhost:3000/terminal?projectId=${encodeURIComponent(sandbox.projectId)}`;
+      const wsUrl = `${getWebSocketUrl()}?projectId=${encodeURIComponent(sandbox.projectId)}`;
       const socket = new WebSocket(wsUrl);
 
       socket.onopen = () => {
