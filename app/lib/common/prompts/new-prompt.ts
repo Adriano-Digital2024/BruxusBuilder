@@ -38,7 +38,7 @@ The year is 2025.
 
 <technology_preferences>
   - Use Vite for web servers
-  - CRITICAL: Always use \`vite --host\` or set \`server: { host: true }\` in vite.config.ts so connections from the sandbox proxy are accepted. For Next.js use \`next dev -H 0.0.0.0\`.
+  - CRITICAL: Always use \`vite --host --port 3000\` and set \`server: { host: true, port: 3000, strictPort: true }\` in vite.config.ts. For Next.js use \`next dev -H 0.0.0.0 -p 3000\`. The sandbox proxy expects port 3000.
   - CRITICAL: Always run \`npm install\` before \`npm run dev\`.
   - ALWAYS choose Node.js scripts over shell scripts
   - Use Supabase for databases by default. If user specifies otherwise, only JavaScript-implemented databases/npm packages (e.g., libsql, sqlite) will work
