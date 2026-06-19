@@ -1,6 +1,8 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import http from 'node:http';
+import { WebSocketServer } from 'ws';
 import { Daytona } from '@daytona/sdk';
 
 const app = express();
@@ -32,7 +34,6 @@ try {
   daytona = null;
 }
 
-// In-memory project→sandbox mapping (replace with DB in production)
 const projects = new Map();
 
 async function getSandbox(projectId) {
@@ -94,7 +95,7 @@ app.post('/api/sandbox/write', async (req, res) => {
     const sandbox = await getSandbox(projectId);
     if (!sandbox) return res.status(404).json({ success: false, error: 'Sandbox not found' });
 
-    await sandbox.fs.setFile(filePath, content || ' ');
+    await sandbox.fs.uploadFile(Buffer.from(content || ' '), filePath);
     console.log(`File written: ${filePath} in sandbox ${sandbox.id}`);
     res.json({ success: true, sandboxId: sandbox.id });
   } catch (error) {
@@ -203,8 +204,8 @@ app.get('/api/sandbox/read', async (req, res) => {
     const sandbox = await getSandbox(projectId);
     if (!sandbox) return res.status(404).json({ content: '', error: 'Sandbox not found' });
 
-    const content = await sandbox.fs.readFile(filePath);
-    res.json({ content });
+    const buffer = await sandbox.fs.downloadFile(filePath);
+    res.json({ content: buffer.toString('utf-8') });
   } catch (error) {
     res.json({ content: '', error: error.message });
   }
@@ -221,8 +222,8 @@ app.get('/api/sandbox/readdir', async (req, res) => {
     const sandbox = await getSandbox(projectId);
     if (!sandbox) return res.status(404).json({ entries: [], error: 'Sandbox not found' });
 
-    const info = await sandbox.fs.listFiles(dirPath);
-    const entries = (info.files || []).map((f) => ({
+    const files = await sandbox.fs.listFiles(dirPath);
+    const entries = (files || []).map((f) => ({
       name: f.name,
       isDirectory: f.isDir,
     }));
@@ -244,9 +245,33 @@ app.get('/api/health', (_req, res) => {
   });
 });
 
-// ── Start ───────────────────────────────────────────────
+// ── HTTP + WebSocket server ─────────────────────────────
 
-app.listen(PORT, () => {
+const server = http.createServer(app);
+const wss = new WebSocketServer({ server });
+
+wss.on('connection', (ws, req) => {
+  const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
+  const projectId = url.searchParams.get('projectId') || 'unknown';
+  console.log(`WebSocket client connected for project ${projectId}`);
+
+  ws.send(JSON.stringify({ type: 'info', message: 'Conectado ao terminal do Bruxus Sandbox' }));
+
+  ws.on('message', (data) => {
+    console.log(`[terminal] input from ${projectId}:`, data.toString().substring(0, 100));
+  });
+
+  ws.on('close', () => {
+    console.log(`WebSocket client disconnected for project ${projectId}`);
+  });
+
+  ws.on('error', (err) => {
+    console.error(`WebSocket error for project ${projectId}:`, err.message);
+  });
+});
+
+server.listen(PORT, () => {
   console.log(`Bruxus Sandbox Backend running on port ${PORT}`);
   console.log(`Daytona SDK: ${daytona ? 'connected' : 'dummy mode (set DAYTONA_API_KEY)'}`);
+  console.log(`WebSocket server attached`);
 });
