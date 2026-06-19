@@ -136,7 +136,7 @@ app.post('/api/sandbox/execute', async (req, res) => {
     const sandbox = await getSandbox(projectId);
     if (!sandbox) return res.status(404).json({ success: false, error: 'Sandbox not found' });
 
-    const result = await sandbox.process.codeRun(command);
+    const result = await sandbox.process.executeCommand(command);
     res.json({
       success: true,
       output: result.result || '',
