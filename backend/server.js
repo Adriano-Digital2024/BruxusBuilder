@@ -7,7 +7,15 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors({
-  origin: ['http://localhost:5173', 'http://localhost:4321', '*'],
+  origin: [
+    'http://localhost:5173',
+    'http://localhost:4321',
+    'https://bruxus-oficial.pages.dev',
+    'https://bruxus.pages.dev',
+    'https://bruxus.me',
+    'https://builder.bruxus.me',
+    'https://chatfunnels.bruxus.me',
+  ],
   credentials: true,
 }));
 app.use(express.json());
@@ -239,6 +247,6 @@ app.get('/api/health', (_req, res) => {
 // ── Start ───────────────────────────────────────────────
 
 app.listen(PORT, () => {
-  console.log(`Bruxus Sandbox Backend running on http://localhost:${PORT}`);
+  console.log(`Bruxus Sandbox Backend running on port ${PORT}`);
   console.log(`Daytona SDK: ${daytona ? 'connected' : 'dummy mode (set DAYTONA_API_KEY)'}`);
 });
