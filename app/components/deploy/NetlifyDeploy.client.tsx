@@ -2,12 +2,12 @@ import { toast } from 'react-toastify';
 import { useStore } from '@nanostores/react';
 import { netlifyConnection } from '~/lib/stores/netlify';
 import { workbenchStore } from '~/lib/stores/workbench';
-import { webcontainer } from '~/lib/webcontainer';
 import { path } from '~/utils/path';
 import { useState } from 'react';
 import type { ActionCallbackData } from '~/lib/runtime/message-parser';
 import { chatId } from '~/lib/persistence/useChatHistory';
 import { formatBuildFailureOutput } from './deployUtils';
+import { readFileFromSandbox, readDirFromSandbox } from '~/lib/sandbox-service';
 
 export function useNetlifyDeploy() {
   const [isDeploying, setIsDeploying] = useState(false);
@@ -81,7 +81,7 @@ export function useNetlifyDeploy() {
       deployArtifact.runner.handleDeployAction('deploying', 'running', { source: 'netlify' });
 
       // Get the build files
-      const container = await webcontainer;
+      const projectId = 'bruxus-dev-project';
 
       // Remove /home/project from buildPath if it exists
       const buildPath = buildOutput.path.replace('/home/project', '');
@@ -99,7 +99,7 @@ export function useNetlifyDeploy() {
 
       for (const dir of commonOutputDirs) {
         try {
-          await container.fs.readdir(dir);
+          await readDirFromSandbox(projectId, dir);
           finalBuildPath = dir;
           buildPathExists = true;
           console.log(`Using build directory: ${finalBuildPath}`);
@@ -117,18 +117,20 @@ export function useNetlifyDeploy() {
 
       async function getAllFiles(dirPath: string): Promise<Record<string, string>> {
         const files: Record<string, string> = {};
-        const entries = await container.fs.readdir(dirPath, { withFileTypes: true });
+        const result = await readDirFromSandbox(projectId, dirPath);
+        const entries = result.entries;
 
         for (const entry of entries) {
           const fullPath = path.join(dirPath, entry.name);
 
-          if (entry.isFile()) {
-            const content = await container.fs.readFile(fullPath, 'utf-8');
+          if (!entry.isDirectory) {
+            const readResult = await readFileFromSandbox(projectId, fullPath);
+            const content = readResult.content;
 
             // Remove build path prefix from the path
             const deployPath = fullPath.replace(finalBuildPath, '');
             files[deployPath] = content;
-          } else if (entry.isDirectory()) {
+          } else {
             const subFiles = await getAllFiles(fullPath);
             Object.assign(files, subFiles);
           }

@@ -507,7 +507,7 @@ docker run -p 3000:3000 myapp
         );
       });
 
-      it('should detect webcontainer commands', () => {
+      it('should detect filesystem commands', () => {
         const input = `Check your files:
 
 \`\`\`bash

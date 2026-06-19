@@ -10,7 +10,7 @@ export async function loader({ params }: LoaderFunctionArgs) {
   return json({ previewId });
 }
 
-export default function WebContainerPreview() {
+export default function SandboxPreview() {
   return (
     <div className="w-full h-full flex items-center justify-center bg-bolt-elements-background-depth-1">
       <div className="text-center text-bolt-elements-textSecondary">

@@ -3,11 +3,11 @@ import { createSandbox } from '~/lib/sandbox-service';
 
 const DEFAULT_PROJECT_ID = 'bruxus-dev-project';
 
-interface WebContainerContext {
+interface SandboxContext {
   loaded: boolean;
 }
 
-export const webcontainerContext: WebContainerContext = import.meta.hot?.data.webcontainerContext ?? {
+export const webcontainerContext: SandboxContext = import.meta.hot?.data.webcontainerContext ?? {
   loaded: false,
 };
 

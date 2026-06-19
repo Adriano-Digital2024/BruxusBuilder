@@ -1,13 +1,13 @@
 import { toast } from 'react-toastify';
 import { useStore } from '@nanostores/react';
 import { workbenchStore } from '~/lib/stores/workbench';
-import { webcontainer } from '~/lib/webcontainer';
 import { path } from '~/utils/path';
 import { useState } from 'react';
 import type { ActionCallbackData } from '~/lib/runtime/message-parser';
 import { chatId } from '~/lib/persistence/useChatHistory';
 import { getLocalStorage } from '~/lib/persistence/localStorage';
 import { formatBuildFailureOutput } from './deployUtils';
+import { readFileFromSandbox, readDirFromSandbox } from '~/lib/sandbox-service';
 
 export function useGitHubDeploy() {
   const [isDeploying, setIsDeploying] = useState(false);
@@ -83,12 +83,13 @@ export function useGitHubDeploy() {
       });
 
       // Get all project files instead of just the build directory since we're deploying to a repository
-      const container = await webcontainer;
+      const projectId = 'bruxus-dev-project';
 
       // Get all files recursively - we'll deploy the entire project, not just the build directory
       async function getAllFiles(dirPath: string, basePath: string = ''): Promise<Record<string, string>> {
         const files: Record<string, string> = {};
-        const entries = await container.fs.readdir(dirPath, { withFileTypes: true });
+        const result = await readDirFromSandbox(projectId, dirPath);
+        const entries = result.entries;
 
         for (const entry of entries) {
           const fullPath = path.join(dirPath, entry.name);
@@ -98,7 +99,7 @@ export function useGitHubDeploy() {
 
           // Skip node_modules, .git directories and other common excludes
           if (
-            entry.isDirectory() &&
+            entry.isDirectory &&
             (entry.name === 'node_modules' ||
               entry.name === '.git' ||
               entry.name === 'dist' ||
@@ -109,14 +110,15 @@ export function useGitHubDeploy() {
             continue;
           }
 
-          if (entry.isFile()) {
+          if (!entry.isDirectory) {
             // Skip binary files, large files and other common excludes
             if (entry.name.endsWith('.DS_Store') || entry.name.endsWith('.log') || entry.name.startsWith('.env')) {
               continue;
             }
 
             try {
-              const content = await container.fs.readFile(fullPath, 'utf-8');
+              const readResult = await readFileFromSandbox(projectId, fullPath);
+              const content = readResult.content;
 
               // Store the file with its relative path, not the full system path
               files[relativePath] = content;
@@ -124,7 +126,7 @@ export function useGitHubDeploy() {
               console.warn(`Could not read file ${fullPath}:`, error);
               continue;
             }
-          } else if (entry.isDirectory()) {
+          } else {
             const subFiles = await getAllFiles(fullPath, relativePath);
             Object.assign(files, subFiles);
           }

@@ -25,7 +25,7 @@ The year is 2025.
 </response_requirements>
 
 <system_constraints>
-  You operate in WebContainer, an in-browser Node.js runtime that emulates a Linux system:
+  You operate in Bruxus Sandbox, an in-browser Node.js runtime that emulates a Linux system:
     - Runs in browser, not full Linux system or cloud VM
     - Shell emulating zsh
     - Cannot run native binaries (only JS, WebAssembly)

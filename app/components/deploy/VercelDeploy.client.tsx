@@ -2,12 +2,12 @@ import { toast } from 'react-toastify';
 import { useStore } from '@nanostores/react';
 import { vercelConnection } from '~/lib/stores/vercel';
 import { workbenchStore } from '~/lib/stores/workbench';
-import { webcontainer } from '~/lib/webcontainer';
 import { path } from '~/utils/path';
 import { useState } from 'react';
 import type { ActionCallbackData } from '~/lib/runtime/message-parser';
 import { chatId } from '~/lib/persistence/useChatHistory';
 import { formatBuildFailureOutput } from './deployUtils';
+import { readFileFromSandbox, readDirFromSandbox } from '~/lib/sandbox-service';
 
 export function useVercelDeploy() {
   const [isDeploying, setIsDeploying] = useState(false);
@@ -80,7 +80,7 @@ export function useVercelDeploy() {
       deployArtifact.runner.handleDeployAction('deploying', 'running', { source: 'vercel' });
 
       // Get the build files
-      const container = await webcontainer;
+      const projectId = 'bruxus-dev-project';
 
       // Remove /home/project from buildPath if it exists
       const buildPath = buildOutput.path.replace('/home/project', '');
@@ -96,7 +96,7 @@ export function useVercelDeploy() {
 
       for (const dir of commonOutputDirs) {
         try {
-          await container.fs.readdir(dir);
+          await readDirFromSandbox(projectId, dir);
           finalBuildPath = dir;
           buildPathExists = true;
           break;
@@ -113,18 +113,20 @@ export function useVercelDeploy() {
       // Get all files recursively
       async function getAllFiles(dirPath: string): Promise<Record<string, string>> {
         const files: Record<string, string> = {};
-        const entries = await container.fs.readdir(dirPath, { withFileTypes: true });
+        const result = await readDirFromSandbox(projectId, dirPath);
+        const entries = result.entries;
 
         for (const entry of entries) {
           const fullPath = path.join(dirPath, entry.name);
 
-          if (entry.isFile()) {
-            const content = await container.fs.readFile(fullPath, 'utf-8');
+          if (!entry.isDirectory) {
+            const readResult = await readFileFromSandbox(projectId, fullPath);
+            const content = readResult.content;
 
             // Remove build path prefix from the path
             const deployPath = fullPath.replace(finalBuildPath, '');
             files[deployPath] = content;
-          } else if (entry.isDirectory()) {
+          } else {
             const subFiles = await getAllFiles(fullPath);
             Object.assign(files, subFiles);
           }
@@ -139,14 +141,16 @@ export function useVercelDeploy() {
       const allProjectFiles: Record<string, string> = {};
 
       async function getAllProjectFiles(dirPath: string): Promise<void> {
-        const entries = await container.fs.readdir(dirPath, { withFileTypes: true });
+        const result = await readDirFromSandbox(projectId, dirPath);
+        const entries = result.entries;
 
         for (const entry of entries) {
           const fullPath = path.join(dirPath, entry.name);
 
-          if (entry.isFile()) {
+          if (!entry.isDirectory) {
             try {
-              const content = await container.fs.readFile(fullPath, 'utf-8');
+              const readResult = await readFileFromSandbox(projectId, fullPath);
+              const content = readResult.content;
 
               // Store with relative path from project root
               let relativePath = fullPath;
@@ -162,7 +166,7 @@ export function useVercelDeploy() {
               // Skip binary files or files that can't be read as text
               console.log(`Skipping file ${entry.name}: ${error}`);
             }
-          } else if (entry.isDirectory() && !entry.name.startsWith('.') && entry.name !== 'node_modules') {
+          } else if (!entry.name.startsWith('.') && entry.name !== 'node_modules') {
             await getAllProjectFiles(fullPath);
           }
         }

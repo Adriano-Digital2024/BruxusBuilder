@@ -10,7 +10,7 @@ export const loader: LoaderFunction = async ({ request }) => {
         <title>Bruxus Builder</title>
       </head>
       <body>
-        <p>WebContainer connect is no longer used. The sandbox is managed remotely.</p>
+        <p>Sandbox connect is no longer used. The sandbox is managed remotely.</p>
       </body>
     </html>`,
     { headers: { 'Content-Type': 'text/html' } },

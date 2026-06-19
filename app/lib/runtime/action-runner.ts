@@ -521,7 +521,7 @@ export class ActionRunner {
         pattern: /command not found/,
         title: 'Command Not Found',
         getMessage: () =>
-          `The command '${firstWord}' is not available in WebContainer.\n\nSuggestion: Check available commands or use a package manager to install it.`,
+          `The command '${firstWord}' is not available in the sandbox.\n\nSuggestion: Check available commands or use a package manager to install it.`,
       },
       {
         pattern: /Is a directory/,
