@@ -1,23 +1,36 @@
-import type { WebContainer, WebContainerProcess } from '@webcontainer/api';
 import { atom, type WritableAtom } from 'nanostores';
 import type { ITerminal } from '~/types/terminal';
-import { newBoltShellProcess, newShellProcess } from '~/utils/shell';
+import { newBoltShellProcess, cleanTerminalOutput } from '~/utils/shell';
 import { coloredText } from '~/utils/terminal';
 
+const DEFAULT_PROJECT_ID = 'bruxus-dev-project';
+
+interface SandboxProxy {
+  workdir: string;
+  sandboxId: string;
+  projectId: string;
+}
+
+interface TerminalSocket {
+  terminal: ITerminal;
+  socket: WebSocket;
+}
+
 export class TerminalStore {
-  #webcontainer: Promise<WebContainer>;
-  #terminals: Array<{ terminal: ITerminal; process: WebContainerProcess }> = [];
+  #sandboxProxy: Promise<SandboxProxy>;
+  #terminals: TerminalSocket[] = [];
   #boltTerminal = newBoltShellProcess();
 
   showTerminal: WritableAtom<boolean> = import.meta.hot?.data.showTerminal ?? atom(true);
 
-  constructor(webcontainerPromise: Promise<WebContainer>) {
-    this.#webcontainer = webcontainerPromise;
+  constructor(sandboxProxyPromise: Promise<SandboxProxy>) {
+    this.#sandboxProxy = sandboxProxyPromise;
 
     if (import.meta.hot) {
       import.meta.hot.data.showTerminal = this.showTerminal;
     }
   }
+
   get boltTerminal() {
     return this.#boltTerminal;
   }
@@ -25,29 +38,83 @@ export class TerminalStore {
   toggleTerminal(value?: boolean) {
     this.showTerminal.set(value !== undefined ? value : !this.showTerminal.get());
   }
+
   async attachBoltTerminal(terminal: ITerminal) {
     try {
-      const wc = await this.#webcontainer;
-      await this.#boltTerminal.init(wc, terminal);
+      const sandbox = await this.#sandboxProxy;
+      await this.#boltTerminal.init();
+
+      const wsUrl = `ws://localhost:3000/terminal?projectId=${encodeURIComponent(sandbox.projectId)}`;
+      const socket = new WebSocket(wsUrl);
+
+      socket.onopen = () => {
+        terminal.write(coloredText.green('Connected to sandbox terminal\n\n'));
+      };
+
+      socket.onmessage = (event) => {
+        terminal.write(event.data);
+      };
+
+      socket.onerror = () => {
+        terminal.write(coloredText.red('WebSocket connection error\n\n'));
+      };
+
+      socket.onclose = () => {
+        terminal.write(coloredText.red('Disconnected from sandbox terminal\n\n'));
+      };
+
+      terminal.onData((data) => {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(data);
+        }
+      });
+
+      this.#terminals.push({ terminal, socket });
     } catch (error: any) {
-      terminal.write(coloredText.red('Failed to spawn bolt shell\n\n') + error.message);
-      return;
+      terminal.write(coloredText.red('Failed to connect to terminal\n\n') + error.message);
     }
   }
 
   async attachTerminal(terminal: ITerminal) {
     try {
-      const shellProcess = await newShellProcess(await this.#webcontainer, terminal);
-      this.#terminals.push({ terminal, process: shellProcess });
+      const sandbox = await this.#sandboxProxy;
+
+      const wsUrl = `ws://localhost:3000/terminal?projectId=${encodeURIComponent(sandbox.projectId)}`;
+      const socket = new WebSocket(wsUrl);
+
+      socket.onopen = () => {
+        terminal.write(coloredText.green('Connected to sandbox shell\n\n'));
+      };
+
+      socket.onmessage = (event) => {
+        terminal.write(event.data);
+      };
+
+      socket.onerror = () => {
+        terminal.write(coloredText.red('WebSocket connection error\n\n'));
+      };
+
+      socket.onclose = () => {
+        terminal.write(coloredText.red('Disconnected from sandbox shell\n\n'));
+      };
+
+      terminal.onData((data) => {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(data);
+        }
+      });
+
+      this.#terminals.push({ terminal, socket });
     } catch (error: any) {
-      terminal.write(coloredText.red('Failed to spawn shell\n\n') + error.message);
-      return;
+      terminal.write(coloredText.red('Failed to connect to shell\n\n') + error.message);
     }
   }
 
   onTerminalResize(cols: number, rows: number) {
-    for (const { process } of this.#terminals) {
-      process.resize({ cols, rows });
+    for (const { socket } of this.#terminals) {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.send(JSON.stringify({ type: 'resize', cols, rows }));
+      }
     }
   }
 
@@ -55,13 +122,8 @@ export class TerminalStore {
     const terminalIndex = this.#terminals.findIndex((t) => t.terminal === terminal);
 
     if (terminalIndex !== -1) {
-      const { process } = this.#terminals[terminalIndex];
-
-      try {
-        process.kill();
-      } catch (error) {
-        console.warn('Failed to kill terminal process:', error);
-      }
+      const { socket } = this.#terminals[terminalIndex];
+      socket.close();
       this.#terminals.splice(terminalIndex, 1);
     }
   }

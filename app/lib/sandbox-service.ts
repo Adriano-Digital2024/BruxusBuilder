@@ -62,6 +62,22 @@ export async function deleteFileFromSandbox(
   return sandboxFetch<SandboxResult>('/delete', { projectId, path: filePath });
 }
 
+export async function readFileFromSandbox(
+  projectId: string,
+  filePath: string,
+): Promise<{ content: string }> {
+  return sandboxFetch<{ content: string }>(`/read?projectId=${encodeURIComponent(projectId)}&path=${encodeURIComponent(filePath)}`);
+}
+
+export async function readDirFromSandbox(
+  projectId: string,
+  dirPath: string,
+): Promise<{ entries: Array<{ name: string; isDirectory: boolean }> }> {
+  return sandboxFetch<{ entries: Array<{ name: string; isDirectory: boolean }> }>(
+    `/readdir?projectId=${encodeURIComponent(projectId)}&path=${encodeURIComponent(dirPath)}`,
+  );
+}
+
 export async function destroySandbox(projectId: string): Promise<{ success: boolean }> {
   return sandboxFetch<{ success: boolean }>('/destroy', { projectId });
 }

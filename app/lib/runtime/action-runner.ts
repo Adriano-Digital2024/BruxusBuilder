@@ -1,4 +1,3 @@
-import type { WebContainer } from '@webcontainer/api';
 import { path as nodePath } from '~/utils/path';
 import { atom, map, type MapStore } from 'nanostores';
 import type { ActionAlert, BoltAction, DeployAlert, FileHistory, SupabaseAction, SupabaseAlert } from '~/types/actions';
@@ -6,6 +5,11 @@ import { createScopedLogger } from '~/utils/logger';
 import { unreachable } from '~/utils/unreachable';
 import type { ActionCallbackData } from './message-parser';
 import type { BoltShell } from '~/utils/shell';
+import {
+  executeCommandInSandbox,
+  writeFileToSandbox,
+  readFileFromSandbox,
+} from '~/lib/sandbox-service';
 
 const logger = createScopedLogger('ActionRunner');
 
@@ -64,7 +68,7 @@ class ActionCommandError extends Error {
 }
 
 export class ActionRunner {
-  #webcontainer: Promise<WebContainer>;
+  #projectId: string = 'bruxus-dev-project';
   #currentExecutionPromise: Promise<void> = Promise.resolve();
   #shellTerminal: () => BoltShell;
   runnerId = atom<string>(`${Date.now()}`);
@@ -75,13 +79,13 @@ export class ActionRunner {
   buildOutput?: { path: string; exitCode: number; output: string };
 
   constructor(
-    webcontainerPromise: Promise<WebContainer>,
+    webcontainerPromise: Promise<{ workdir: string; sandboxId: string; projectId: string }>,
     getShellTerminal: () => BoltShell,
     onAlert?: (alert: ActionAlert) => void,
     onSupabaseAlert?: (alert: SupabaseAlert) => void,
     onDeployAlert?: (alert: DeployAlert) => void,
   ) {
-    this.#webcontainer = webcontainerPromise;
+    webcontainerPromise.then((s) => { this.#projectId = s.projectId; });
     this.#shellTerminal = getShellTerminal;
     this.onAlert = onAlert;
     this.onSupabaseAlert = onSupabaseAlert;
@@ -252,29 +256,11 @@ export class ActionRunner {
       unreachable('Expected shell action');
     }
 
-    const shell = this.#shellTerminal();
-    await shell.ready();
+    const resp = await executeCommandInSandbox(this.#projectId, action.content);
+    logger.debug(`${action.type} Shell Response: [exit code:${resp.exitCode}]`);
 
-    if (!shell || !shell.terminal || !shell.process) {
-      unreachable('Shell terminal not found');
-    }
-
-    // Pre-validate command for common issues
-    const validationResult = await this.#validateShellCommand(action.content);
-
-    if (validationResult.shouldModify && validationResult.modifiedCommand) {
-      logger.debug(`Modified command: ${action.content} -> ${validationResult.modifiedCommand}`);
-      action.content = validationResult.modifiedCommand;
-    }
-
-    const resp = await shell.executeCommand(this.runnerId.get(), action.content, () => {
-      logger.debug(`[${action.type}]:Aborting Action\n\n`, action);
-      action.abort();
-    });
-    logger.debug(`${action.type} Shell Response: [exit code:${resp?.exitCode}]`);
-
-    if (resp?.exitCode != 0) {
-      const enhancedError = this.#createEnhancedShellError(action.content, resp?.exitCode, resp?.output);
+    if (resp.exitCode !== 0) {
+      const enhancedError = this.#createEnhancedShellError(action.content, resp.exitCode, resp.output);
       throw new ActionCommandError(enhancedError.title, enhancedError.details);
     }
   }
@@ -284,25 +270,11 @@ export class ActionRunner {
       unreachable('Expected shell action');
     }
 
-    if (!this.#shellTerminal) {
-      unreachable('Shell terminal not found');
-    }
+    const resp = await executeCommandInSandbox(this.#projectId, action.content);
+    logger.debug(`${action.type} Shell Response: [exit code:${resp.exitCode}]`);
 
-    const shell = this.#shellTerminal();
-    await shell.ready();
-
-    if (!shell || !shell.terminal || !shell.process) {
-      unreachable('Shell terminal not found');
-    }
-
-    const resp = await shell.executeCommand(this.runnerId.get(), action.content, () => {
-      logger.debug(`[${action.type}]:Aborting Action\n\n`, action);
-      action.abort();
-    });
-    logger.debug(`${action.type} Shell Response: [exit code:${resp?.exitCode}]`);
-
-    if (resp?.exitCode != 0) {
-      throw new ActionCommandError('Failed To Start Application', resp?.output || 'No Output Available');
+    if (resp.exitCode !== 0) {
+      throw new ActionCommandError('Failed To Start Application', resp.output || 'No Output Available');
     }
 
     return resp;
@@ -313,29 +285,8 @@ export class ActionRunner {
       unreachable('Expected file action');
     }
 
-    const webcontainer = await this.#webcontainer;
-    const relativePath = nodePath.relative(webcontainer.workdir, action.filePath);
-
-    let folder = nodePath.dirname(relativePath);
-
-    // remove trailing slashes
-    folder = folder.replace(/\/+$/g, '');
-
-    if (folder !== '.') {
-      try {
-        await webcontainer.fs.mkdir(folder, { recursive: true });
-        logger.debug('Created folder', folder);
-      } catch (error) {
-        logger.error('Failed to create folder\n\n', error);
-      }
-    }
-
-    try {
-      await webcontainer.fs.writeFile(relativePath, action.content);
-      logger.debug(`File written ${relativePath}`);
-    } catch (error) {
-      logger.error('Failed to write file\n\n', error);
-    }
+    await writeFileToSandbox(this.#projectId, action.filePath, action.content);
+    logger.debug(`File written ${action.filePath}`);
   }
 
   #updateAction(id: string, newState: ActionStateUpdate) {
@@ -346,11 +297,8 @@ export class ActionRunner {
 
   async getFileHistory(filePath: string): Promise<FileHistory | null> {
     try {
-      const webcontainer = await this.#webcontainer;
-      const historyPath = this.#getHistoryPath(filePath);
-      const content = await webcontainer.fs.readFile(historyPath, 'utf-8');
-
-      return JSON.parse(content);
+      const result = await readFileFromSandbox(this.#projectId, nodePath.join('.history', filePath));
+      return JSON.parse(result.content);
     } catch (error) {
       logger.error('Failed to get file history:', error);
       return null;
@@ -358,8 +306,7 @@ export class ActionRunner {
   }
 
   async saveFileHistory(filePath: string, history: FileHistory) {
-    // const webcontainer = await this.#webcontainer;
-    const historyPath = this.#getHistoryPath(filePath);
+    const historyPath = nodePath.join('.history', filePath);
 
     await this.#runFileAction({
       type: 'file',
@@ -369,16 +316,11 @@ export class ActionRunner {
     } as any);
   }
 
-  #getHistoryPath(filePath: string) {
-    return nodePath.join('.history', filePath);
-  }
-
   async #runBuildAction(action: ActionState) {
     if (action.type !== 'build') {
       unreachable('Expected build action');
     }
 
-    // Trigger build started alert
     this.onDeployAlert?.({
       type: 'info',
       title: 'Building Application',
@@ -389,37 +331,15 @@ export class ActionRunner {
       source: 'netlify',
     });
 
-    const webcontainer = await this.#webcontainer;
+    const resp = await executeCommandInSandbox(this.#projectId, action.content);
 
-    // Create a new terminal specifically for the build
-    const buildProcess = await webcontainer.spawn('npm', ['run', 'build']);
-
-    let output = '';
-    const outputPromise = buildProcess.output.pipeTo(
-      new WritableStream({
-        write(data) {
-          output += data;
-        },
-      }),
-    );
-
-    const exitCode = await buildProcess.exit;
-    await outputPromise.catch(() => {
-      // Ignore output piping errors; we still have whatever was captured
-    });
-
-    let buildDir = '';
+    const exitCode = resp.exitCode ?? 0;
+    const output = resp.output ?? '';
+    const buildDir = '/home/project/dist';
 
     if (exitCode !== 0) {
-      const buildResult = {
-        path: buildDir,
-        exitCode,
-        output,
-      };
+      this.buildOutput = { path: buildDir, exitCode, output };
 
-      this.buildOutput = buildResult;
-
-      // Trigger build failed alert
       this.onDeployAlert?.({
         type: 'error',
         title: 'Build Failed',
@@ -434,7 +354,6 @@ export class ActionRunner {
       throw new ActionCommandError('Build Failed', output || 'No Output Available');
     }
 
-    // Trigger build success alert
     this.onDeployAlert?.({
       type: 'success',
       title: 'Build Completed',
@@ -445,36 +364,9 @@ export class ActionRunner {
       source: 'netlify',
     });
 
-    // Check for common build directories
-    const commonBuildDirs = ['dist', 'build', 'out', 'output', '.next', 'public'];
+    this.buildOutput = { path: buildDir, exitCode, output };
 
-    // Try to find the first existing build directory
-    for (const dir of commonBuildDirs) {
-      const dirPath = nodePath.join(webcontainer.workdir, dir);
-
-      try {
-        await webcontainer.fs.readdir(dirPath);
-        buildDir = dirPath;
-        break;
-      } catch {
-        continue;
-      }
-    }
-
-    // If no build directory was found, use the default (dist)
-    if (!buildDir) {
-      buildDir = nodePath.join(webcontainer.workdir, 'dist');
-    }
-
-    const buildResult = {
-      path: buildDir,
-      exitCode,
-      output,
-    };
-
-    this.buildOutput = buildResult;
-
-    return buildResult;
+    return this.buildOutput;
   }
   async handleSupabaseAction(action: SupabaseAction) {
     const { operation, content, filePath } = action;
@@ -574,98 +466,11 @@ export class ActionRunner {
     });
   }
 
-  async #validateShellCommand(command: string): Promise<{
+  async #validateShellCommand(_command: string): Promise<{
     shouldModify: boolean;
     modifiedCommand?: string;
     warning?: string;
   }> {
-    const trimmedCommand = command.trim();
-
-    // Handle rm commands that might fail due to missing files
-    if (trimmedCommand.startsWith('rm ') && !trimmedCommand.includes(' -f')) {
-      const rmMatch = trimmedCommand.match(/^rm\s+(.+)$/);
-
-      if (rmMatch) {
-        const filePaths = rmMatch[1].split(/\s+/);
-
-        // Check if any of the files exist using WebContainer
-        try {
-          const webcontainer = await this.#webcontainer;
-          const existingFiles = [];
-
-          for (const filePath of filePaths) {
-            if (filePath.startsWith('-')) {
-              continue;
-            } // Skip flags
-
-            try {
-              await webcontainer.fs.readFile(filePath);
-              existingFiles.push(filePath);
-            } catch {
-              // File doesn't exist, skip it
-            }
-          }
-
-          if (existingFiles.length === 0) {
-            // No files exist, modify command to use -f flag to avoid error
-            return {
-              shouldModify: true,
-              modifiedCommand: `rm -f ${filePaths.join(' ')}`,
-              warning: 'Added -f flag to rm command as target files do not exist',
-            };
-          } else if (existingFiles.length < filePaths.length) {
-            // Some files don't exist, modify to only remove existing ones with -f for safety
-            return {
-              shouldModify: true,
-              modifiedCommand: `rm -f ${filePaths.join(' ')}`,
-              warning: 'Added -f flag to rm command as some target files do not exist',
-            };
-          }
-        } catch (error) {
-          logger.debug('Could not validate rm command files:', error);
-        }
-      }
-    }
-
-    // Handle cd commands to non-existent directories
-    if (trimmedCommand.startsWith('cd ')) {
-      const cdMatch = trimmedCommand.match(/^cd\s+(.+)$/);
-
-      if (cdMatch) {
-        const targetDir = cdMatch[1].trim();
-
-        try {
-          const webcontainer = await this.#webcontainer;
-          await webcontainer.fs.readdir(targetDir);
-        } catch {
-          return {
-            shouldModify: true,
-            modifiedCommand: `mkdir -p ${targetDir} && cd ${targetDir}`,
-            warning: 'Directory does not exist, created it first',
-          };
-        }
-      }
-    }
-
-    // Handle cp/mv commands with missing source files
-    if (trimmedCommand.match(/^(cp|mv)\s+/)) {
-      const parts = trimmedCommand.split(/\s+/);
-
-      if (parts.length >= 3) {
-        const sourceFile = parts[1];
-
-        try {
-          const webcontainer = await this.#webcontainer;
-          await webcontainer.fs.readFile(sourceFile);
-        } catch {
-          return {
-            shouldModify: false,
-            warning: `Source file '${sourceFile}' does not exist`,
-          };
-        }
-      }
-    }
-
     return { shouldModify: false };
   }
 
