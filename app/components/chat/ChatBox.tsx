@@ -290,7 +290,7 @@ export const ChatBox: React.FC<ChatBoxProps> = (props) => {
               onStop={props.stopListening}
               disabled={props.isStreaming}
             />
-            <IconButton title="Voice Funnel" className="transition-all" onClick={() => window.open('/voice-funnel', '_self')}>
+            <IconButton title="Voice Funnel" className="transition-all" onClick={() => window.open('/voice-funnel', '_blank')}>
               <div className="i-ph:lightning text-xl text-purple-500"></div>
             </IconButton>
             {props.chatStarted && (

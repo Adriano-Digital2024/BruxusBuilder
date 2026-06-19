@@ -255,7 +255,7 @@ wss.on('connection', (ws, req) => {
   const projectId = url.searchParams.get('projectId') || 'unknown';
   console.log(`WebSocket client connected for project ${projectId}`);
 
-  ws.send(JSON.stringify({ type: 'info', message: 'Conectado ao terminal do Bruxus Sandbox' }));
+  ws.send('Conectado ao terminal do Bruxus Sandbox\n');
 
   ws.on('message', (data) => {
     console.log(`[terminal] input from ${projectId}:`, data.toString().substring(0, 100));

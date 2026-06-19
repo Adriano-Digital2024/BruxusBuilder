@@ -56,6 +56,7 @@ export class TerminalStore {
       await this.#boltTerminal.init(terminal);
 
       const wsUrl = `${getWebSocketUrl()}?projectId=${encodeURIComponent(sandbox.projectId)}`;
+      console.log('[terminal] Connecting WebSocket:', wsUrl);
       const socket = new WebSocket(wsUrl);
 
       socket.onopen = () => {
@@ -63,7 +64,8 @@ export class TerminalStore {
       };
 
       socket.onmessage = (event) => {
-        terminal.write(event.data);
+        const data = typeof event.data === 'string' ? event.data : String(event.data);
+        terminal.write(data);
       };
 
       socket.onerror = () => {
@@ -91,6 +93,7 @@ export class TerminalStore {
       const sandbox = await this.#sandboxProxy;
 
       const wsUrl = `${getWebSocketUrl()}?projectId=${encodeURIComponent(sandbox.projectId)}`;
+      console.log('[terminal] Connecting shell WebSocket:', wsUrl);
       const socket = new WebSocket(wsUrl);
 
       socket.onopen = () => {
@@ -98,7 +101,8 @@ export class TerminalStore {
       };
 
       socket.onmessage = (event) => {
-        terminal.write(event.data);
+        const data = typeof event.data === 'string' ? event.data : String(event.data);
+        terminal.write(data);
       };
 
       socket.onerror = () => {
