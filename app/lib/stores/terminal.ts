@@ -53,7 +53,7 @@ export class TerminalStore {
   async attachBoltTerminal(terminal: ITerminal) {
     try {
       const sandbox = await this.#sandboxProxy;
-      await this.#boltTerminal.init();
+      await this.#boltTerminal.init(terminal);
 
       const wsUrl = `${getWebSocketUrl()}?projectId=${encodeURIComponent(sandbox.projectId)}`;
       const socket = new WebSocket(wsUrl);

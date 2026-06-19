@@ -256,7 +256,11 @@ export class ActionRunner {
       unreachable('Expected shell action');
     }
 
+    const shell = this.#shellTerminal();
+    shell.terminal?.write(`\x1b[36m$ ${action.content}\x1b[0m\r\n`);
     const resp = await executeCommandInSandbox(this.#projectId, action.content);
+    shell.terminal?.write(resp.output || '');
+    shell.terminal?.write('\r\n');
     logger.debug(`${action.type} Shell Response: [exit code:${resp.exitCode}]`);
 
     if (resp.exitCode !== 0) {
@@ -270,7 +274,11 @@ export class ActionRunner {
       unreachable('Expected shell action');
     }
 
+    const shell = this.#shellTerminal();
+    shell.terminal?.write(`\x1b[36m$ ${action.content}\x1b[0m\r\n`);
     const resp = await executeCommandInSandbox(this.#projectId, action.content);
+    shell.terminal?.write(resp.output || '');
+    shell.terminal?.write('\r\n');
     logger.debug(`${action.type} Shell Response: [exit code:${resp.exitCode}]`);
 
     if (resp.exitCode !== 0) {

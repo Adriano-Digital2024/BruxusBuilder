@@ -62,6 +62,21 @@ export class EditorStore {
 
   setSelectedFile(filePath: string | undefined) {
     this.selectedFile.set(filePath);
+    this.#syncDocumentFromFilesStore(filePath);
+  }
+
+  #syncDocumentFromFilesStore(filePath: string | undefined) {
+    if (!filePath) return;
+    const currentDoc = this.documents.get()[filePath];
+    if (currentDoc) return;
+    const file = this.#filesStore.getFile(filePath);
+    if (file) {
+      this.documents.setKey(filePath, {
+        value: file.content,
+        filePath,
+        isBinary: file.isBinary,
+      });
+    }
   }
 
   updateScrollPosition(filePath: string, position: ScrollPosition) {

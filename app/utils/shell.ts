@@ -1,5 +1,6 @@
 import { atom } from 'nanostores';
 import { executeCommandInSandbox } from '~/lib/sandbox-service';
+import type { ITerminal } from '~/types/terminal';
 
 const DEFAULT_PROJECT_ID = 'bruxus-dev-project';
 
@@ -8,6 +9,7 @@ export type ExecutionResult = { output: string; exitCode: number } | undefined;
 export class BoltShell {
   #projectId = DEFAULT_PROJECT_ID;
   #initialized = false;
+  #terminal: ITerminal | undefined = undefined;
   executionState = atom<
     { sessionId: string; active: boolean; executionPrms?: Promise<any>; abort?: () => void } | undefined
   >();
@@ -16,22 +18,26 @@ export class BoltShell {
     // noop — sandbox is ready via HTTP
   }
 
-  async init() {
+  async init(terminal?: ITerminal) {
+    if (terminal) {
+      this.#terminal = terminal;
+    }
     this.#initialized = true;
   }
 
   get terminal() {
-    // Backward-compatible null — terminal interaction moves to WebSocket
-    return null;
+    return this.#terminal || null;
   }
 
   get process() {
-    // Backward-compatible null — process management moves to sandbox backend
     return null;
   }
 
   async executeCommand(sessionId: string, command: string, _abort?: () => void): Promise<ExecutionResult> {
     const result = await executeCommandInSandbox(this.#projectId, command);
+    const output = cleanTerminalOutput(result.output ?? '');
+    this.#terminal?.write(output);
+    this.#terminal?.write('\r\n');
     return {
       output: result.output ?? '',
       exitCode: result.exitCode ?? 0,
