@@ -15,7 +15,7 @@ export interface SandboxResult {
   error?: string;
 }
 
-const API_BASE = '/api/sandbox';
+const API_BASE = `${import.meta.env.VITE_BACKEND_URL || ''}/api/sandbox`;
 
 async function sandboxFetch<T>(endpoint: string, body?: Record<string, unknown>): Promise<T> {
   const response = await fetch(`${API_BASE}${endpoint}`, {
