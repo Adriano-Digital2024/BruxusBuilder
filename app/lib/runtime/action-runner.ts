@@ -38,6 +38,14 @@ export type ActionStateUpdate =
 
 type ActionsMap = MapStore<Record<string, ActionState>>;
 
+function stripShellPrompts(output: string): string {
+  return output
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join('\n');
+}
+
 class ActionCommandError extends Error {
   readonly _output: string;
   readonly _header: string;
@@ -259,8 +267,11 @@ export class ActionRunner {
     const shell = this.#shellTerminal();
     shell.terminal?.write(`\x1b[36m$ ${action.content}\x1b[0m\r\n`);
     const resp = await executeCommandInSandbox(this.#projectId, action.content);
-    shell.terminal?.write(resp.output || '');
-    shell.terminal?.write('\r\n');
+    const safeOutput = stripShellPrompts(resp.output || '');
+    if (safeOutput) {
+      shell.terminal?.write(safeOutput);
+      shell.terminal?.write('\r\n');
+    }
     logger.debug(`${action.type} Shell Response: [exit code:${resp.exitCode}]`);
 
     if (resp.exitCode !== 0) {
@@ -277,8 +288,11 @@ export class ActionRunner {
     const shell = this.#shellTerminal();
     shell.terminal?.write(`\x1b[36m$ ${action.content}\x1b[0m\r\n`);
     const resp = await executeCommandInSandbox(this.#projectId, action.content);
-    shell.terminal?.write(resp.output || '');
-    shell.terminal?.write('\r\n');
+    const safeOutput = stripShellPrompts(resp.output || '');
+    if (safeOutput) {
+      shell.terminal?.write(safeOutput);
+      shell.terminal?.write('\r\n');
+    }
     logger.debug(`${action.type} Shell Response: [exit code:${resp.exitCode}]`);
 
     if (resp.exitCode !== 0) {

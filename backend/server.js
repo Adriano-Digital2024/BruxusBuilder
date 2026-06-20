@@ -50,6 +50,19 @@ async function getSandbox(projectId) {
 
 // ── Sandbox routes ──────────────────────────────────────
 
+function sanitizeOutput(output) {
+  return output
+    .replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '')   // strip ANSI escape sequences
+    .replace(/\x1b\][0-9;]*[^\x07]*\x07/g, '') // strip OSC sequences
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join('\n')
+    .trim();
+}
+
 app.post('/api/sandbox/create', async (req, res) => {
   const { projectId } = req.body || {};
   const pid = projectId || 'bruxus-dev-project';
@@ -137,9 +150,10 @@ app.post('/api/sandbox/execute', async (req, res) => {
     if (!sandbox) return res.status(404).json({ success: false, error: 'Sandbox not found' });
 
     const result = await sandbox.process.executeCommand(command);
+    const output = sanitizeOutput(result.result || '');
     res.json({
       success: true,
-      output: result.result || '',
+      output,
       exitCode: result.exitCode ?? 0,
     });
   } catch (error) {
