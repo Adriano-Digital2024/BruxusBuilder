@@ -33,14 +33,18 @@ export class EnhancedStreamingMessageParser extends StreamingMessageParser {
   }
 
   parse(messageId: string, input: string): string {
+    // Aggressively pre-convert any markdown code blocks to Bolt XML before normal parsing.
+    // This is the safety net for models that ignore the XML format instruction.
+    const normalizedInput = this._convertMarkdownCodeBlocks(messageId, input);
+
     // First try the normal parsing
-    let output = super.parse(messageId, input);
+    let output = super.parse(messageId, normalizedInput);
 
     // If no artifacts were detected, check for code blocks that should be files
-    if (!this._hasDetectedArtifacts(input)) {
-      const enhancedInput = this._detectAndWrapCodeBlocks(messageId, input);
+    if (!this._hasDetectedArtifacts(normalizedInput)) {
+      const enhancedInput = this._detectAndWrapCodeBlocks(messageId, normalizedInput);
 
-      if (enhancedInput !== input) {
+      if (enhancedInput !== normalizedInput) {
         // Reset and reparse with enhanced input
         this.reset();
         output = super.parse(messageId, enhancedInput);
@@ -48,6 +52,64 @@ export class EnhancedStreamingMessageParser extends StreamingMessageParser {
     }
 
     return output;
+  }
+
+  private _convertMarkdownCodeBlocks(messageId: string, input: string): string {
+    // Only process if there are markdown code blocks
+    if (!input.includes('```')) {
+      return input;
+    }
+
+    // Don't touch content that is already inside a boltAction file tag
+    const result = input.replace(/```(\w*)\n([\s\S]*?)```/g, (match, language, content) => {
+      // Skip if this block is already inside a boltAction tag
+      if (this._isInsideBoltAction(input, match)) {
+        return match;
+      }
+
+      language = (language || '').toLowerCase().trim();
+      content = content.trim();
+
+      // Skip empty blocks
+      if (!content) {
+        return match;
+      }
+
+      // Shell commands
+      if (this._isShellCommand(content, language)) {
+        logger.debug(`Pre-converted markdown shell block to boltAction`);
+        return this._wrapInShellAction(content, messageId);
+      }
+
+      // File content
+      const filePath = this._inferFileNameFromLanguage(language, content);
+      logger.debug(`Pre-converted markdown code block to boltAction file: ${filePath}`);
+      return this._wrapInArtifact(`artifact-md-${messageId}-${this._artifactCounter++}`, filePath, content);
+    });
+
+    return result;
+  }
+
+  private _isInsideBoltAction(input: string, block: string): boolean {
+    const idx = input.indexOf(block);
+
+    if (idx === -1) {
+      return false;
+    }
+
+    const before = input.substring(0, idx);
+    const after = input.substring(idx + block.length);
+
+    const openAction = before.lastIndexOf('<boltAction');
+    const closeAction = before.lastIndexOf('</boltAction>');
+
+    // We are inside an action if an open tag is closer than the last close tag
+    if (openAction !== -1 && openAction > closeAction) {
+      // And the action is still open after the block
+      return after.indexOf('</boltAction>') !== -1;
+    }
+
+    return false;
   }
 
   private _hasDetectedArtifacts(input: string): boolean {
