@@ -52,6 +52,35 @@ async function getSandbox(projectId) {
   }
 }
 
+async function getOrCreateSandbox(projectId) {
+  if (!daytona) return null;
+
+  const pid = projectId || 'bruxus-dev-project';
+
+  // Try to reuse an existing sandbox
+  const existing = await getSandbox(pid);
+
+  if (existing) {
+    console.log(`Reusing existing sandbox ${existing.id} for project ${pid}`);
+    return existing;
+  }
+
+  // Create a new sandbox on demand
+  try {
+    const sandbox = await daytona.create({
+      language: 'typescript',
+      autoStopInterval: 60,
+      labels: { [PROJECT_ID_LABEL]: pid },
+    });
+
+    console.log(`Sandbox auto-created: ${sandbox.id} for project ${pid}`);
+    return sandbox;
+  } catch (error) {
+    console.error('Failed to auto-create sandbox:', error);
+    return null;
+  }
+}
+
 // ── Sandbox routes ──────────────────────────────────────
 
 function sanitizeOutput(output) {
@@ -120,8 +149,8 @@ app.post('/api/sandbox/write', async (req, res) => {
   }
 
   try {
-    const sandbox = await getSandbox(projectId);
-    if (!sandbox) return res.status(404).json({ success: false, error: 'Sandbox not found' });
+    const sandbox = await getOrCreateSandbox(projectId);
+    if (!sandbox) return res.status(500).json({ success: false, error: 'Unable to get or create sandbox' });
 
     await sandbox.fs.uploadFile(Buffer.from(content || ' '), filePath);
     console.log(`File written: ${filePath} in sandbox ${sandbox.id}`);
@@ -141,8 +170,8 @@ app.post('/api/sandbox/execute', async (req, res) => {
   }
 
   try {
-    const sandbox = await getSandbox(projectId);
-    if (!sandbox) return res.status(404).json({ success: false, error: 'Sandbox not found' });
+    const sandbox = await getOrCreateSandbox(projectId);
+    if (!sandbox) return res.status(500).json({ success: false, error: 'Unable to get or create sandbox' });
 
     const result = await sandbox.process.executeCommand(command);
     const output = sanitizeOutput(result.result || '');
@@ -187,8 +216,8 @@ app.post('/api/sandbox/delete', async (req, res) => {
   }
 
   try {
-    const sandbox = await getSandbox(projectId);
-    if (!sandbox) return res.status(404).json({ success: false, error: 'Sandbox not found' });
+    const sandbox = await getOrCreateSandbox(projectId);
+    if (!sandbox) return res.status(500).json({ success: false, error: 'Unable to get or create sandbox' });
 
     await sandbox.fs.deleteFile(filePath);
     console.log(`File deleted: ${filePath} in sandbox ${sandbox.id}`);
@@ -209,8 +238,8 @@ app.get('/api/sandbox/preview', async (req, res) => {
   }
 
   try {
-    const sandbox = await getSandbox(projectId);
-    if (!sandbox) return res.status(404).json({ success: false, error: 'Sandbox not found' });
+    const sandbox = await getOrCreateSandbox(projectId);
+    if (!sandbox) return res.status(500).json({ success: false, error: 'Unable to get or create sandbox' });
 
     const previewLink = await sandbox.getPreviewLink(previewPort);
     res.json({ previewUrl: previewLink.url });
@@ -228,8 +257,8 @@ app.get('/api/sandbox/read', async (req, res) => {
   }
 
   try {
-    const sandbox = await getSandbox(projectId);
-    if (!sandbox) return res.status(404).json({ content: '', error: 'Sandbox not found' });
+    const sandbox = await getOrCreateSandbox(projectId);
+    if (!sandbox) return res.status(500).json({ content: '', error: 'Unable to get or create sandbox' });
 
     const buffer = await sandbox.fs.downloadFile(filePath);
     res.json({ content: buffer.toString('utf-8') });
@@ -246,8 +275,8 @@ app.get('/api/sandbox/readdir', async (req, res) => {
   }
 
   try {
-    const sandbox = await getSandbox(projectId);
-    if (!sandbox) return res.status(404).json({ entries: [], error: 'Sandbox not found' });
+    const sandbox = await getOrCreateSandbox(projectId);
+    if (!sandbox) return res.status(500).json({ entries: [], error: 'Unable to get or create sandbox' });
 
     const files = await sandbox.fs.listFiles(dirPath);
     const entries = (files || []).map((f) => ({
