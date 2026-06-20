@@ -79,7 +79,7 @@ async function getOrCreateSandbox(projectId) {
       // Create a new sandbox on demand
       const sandbox = await daytona.create({
         language: 'typescript',
-        autoStopInterval: 60,
+        autoStopInterval: 3600,
         labels: { [PROJECT_ID_LABEL]: pid },
       });
 
@@ -114,6 +114,26 @@ function sanitizeOutput(output) {
     .trim();
 }
 
+async function waitForPort3000(sandbox, maxAttempts = 15, delayMs = 1000) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const result = await sandbox.process.executeCommand('curl -s -o /dev/null -w "%{http_code}" http://localhost:3000');
+      const output = sanitizeOutput(result.result || '');
+
+      if (output === '200' || output === '204' || output.startsWith('2') || output.startsWith('3') || output.startsWith('4')) {
+        console.log(`Port 3000 is listening on sandbox ${sandbox.id} after ${attempt} attempt(s)`);
+        return true;
+      }
+    } catch (err) {
+      console.log(`Health check attempt ${attempt}/${maxAttempts} failed for sandbox ${sandbox.id}: ${err.message}`);
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+
+  return false;
+}
+
 app.post('/api/sandbox/create', async (req, res) => {
   const { projectId } = req.body || {};
   const pid = projectId || 'bruxus-dev-project';
@@ -142,7 +162,7 @@ app.post('/api/sandbox/create', async (req, res) => {
 
     const sandbox = await daytona.create({
       language: 'typescript',
-      autoStopInterval: 60,
+      autoStopInterval: 3600,
       labels: { [PROJECT_ID_LABEL]: pid },
     });
     console.log(`Sandbox created: ${sandbox.id} for project ${pid}`);
@@ -258,6 +278,18 @@ app.get('/api/sandbox/preview', async (req, res) => {
   try {
     const sandbox = await getOrCreateSandbox(projectId);
     if (!sandbox) return res.status(500).json({ success: false, error: 'Unable to get or create sandbox' });
+
+    // Give nohup npm run dev a few seconds to actually start Vite before we probe the port
+    console.log(`Waiting 5s for Vite to start on sandbox ${sandbox.id}`);
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+
+    // Health check: confirm port 3000 is actually listening inside the sandbox
+    const isReady = await waitForPort3000(sandbox, 15, 1000);
+
+    if (!isReady) {
+      console.warn(`Port ${previewPort} did not become ready on sandbox ${sandbox.id}`);
+      return res.status(503).json({ success: false, error: `Port ${previewPort} is not ready yet` });
+    }
 
     const previewLink = await sandbox.getPreviewLink(previewPort);
     res.json({ previewUrl: previewLink.url });
