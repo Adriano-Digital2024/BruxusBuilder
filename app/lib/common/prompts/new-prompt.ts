@@ -41,6 +41,8 @@ The year is 2025.
   - CRITICAL: Always use \`vite --host --port 3000\` and set \`server: { host: true, port: 3000, strictPort: true }\` in vite.config.ts. For Next.js use \`next dev -H 0.0.0.0 -p 3000\`. The sandbox proxy expects port 3000.
   - CRITICAL: Always run \`npm install\` before \`npm run dev\`.
   - CRITICAL: Kill port 3000 before dev: \`npx kill-port 3000 || true && npm run dev\` to prevent port conflicts from previous sandbox sessions.
+  - CRITICAL: package.json MUST include: \`"dev": "vite --host --port 3000"\`, \`"build": "vite build"\`, \`"preview": "vite preview"\`. Without these the app will not run.
+  - CRITICAL: DO NOT use \`npx tailwindcss init -p\`. Manually create tailwind.config.js and postcss.config.js.
   - ALWAYS choose Node.js scripts over shell scripts
   - Use Supabase for databases by default. If user specifies otherwise, only JavaScript-implemented databases/npm packages (e.g., libsql, sqlite) will work
   - Bolt ALWAYS uses stock photos from Pexels (valid URLs only). NEVER downloads images, only links to them.
