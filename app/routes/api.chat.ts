@@ -67,6 +67,20 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
       maxLLMSteps: number;
     }>();
 
+  // Force build mode when the last user message requests implementation, regardless of UI toggle
+  let effectiveChatMode = chatMode;
+  const lastUserMessage = [...messages].reverse().find((m) => m.role === 'user');
+  const lastUserContent = typeof lastUserMessage?.content === 'string' ? lastUserMessage.content.toLowerCase() : '';
+
+  if (chatMode === 'discuss' && lastUserContent.length > 0) {
+    const buildKeywords = /\b(create|build|make|generate|develop|code|write|implement|app|website|webpage|component|page|project|vite|react|vue|svelte)\b/;
+
+    if (buildKeywords.test(lastUserContent)) {
+      logger.info('[api.chat] Auto-switching chatMode from discuss to build based on user message');
+      effectiveChatMode = 'build';
+    }
+  }
+
   const cookieHeader = request.headers.get('Cookie');
   const apiKeys = JSON.parse(parseCookies(cookieHeader || '').apiKeys || '{}');
   const providerSettings: Record<string, IProviderSetting> = JSON.parse(
@@ -276,7 +290,7 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
               promptId,
               contextOptimization,
               contextFiles: filteredFiles,
-              chatMode,
+              chatMode: effectiveChatMode,
               designScheme,
               summary,
               messageSliceId,
@@ -317,7 +331,7 @@ async function chatAction({ context, request }: ActionFunctionArgs) {
           promptId,
           contextOptimization,
           contextFiles: filteredFiles,
-          chatMode,
+          chatMode: effectiveChatMode,
           designScheme,
           summary,
           messageSliceId,

@@ -269,6 +269,18 @@ export const BaseChat = React.forwardRef<HTMLDivElement, BaseChatProps>(
     };
 
     const handleSendMessage = (event: React.UIEvent, messageInput?: string) => {
+      const message = (messageInput || input || '').trim().toLowerCase();
+
+      // Auto-switch from Plan to Build mode when the message requests implementation
+      if (chatMode === 'discuss' && setChatMode && message.length > 0) {
+        const buildKeywords = /\b(create|build|make|generate|develop|code|write|implement|app|website|webpage|component|page|project|vite|react|vue|svelte)\b/;
+
+        if (buildKeywords.test(message)) {
+          console.log('[ChatMode] Auto-switching from Plan to Build based on user message');
+          setChatMode('build');
+        }
+      }
+
       if (sendMessage) {
         sendMessage(event, messageInput);
         setSelectedElement?.(null);
