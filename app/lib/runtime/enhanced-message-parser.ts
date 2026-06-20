@@ -100,6 +100,19 @@ export class EnhancedStreamingMessageParser extends StreamingMessageParser {
           /```(?:json|jsx?|tsx?|html?|vue|svelte)\n(\{[\s\S]*?"(?:name|version|scripts|dependencies|devDependencies)"[\s\S]*?\}|<\w+[^>]*>[\s\S]*?<\/\w+>[\s\S]*?)```/gi,
         type: 'structured_file',
       },
+
+      // Pattern 6: Bare markdown code blocks with no filename context (infer from language)
+      {
+        regex: /```(html|css|js|jsx|ts|tsx|json|vue|svelte|py|python)\n([\s\S]*?)```/gi,
+        type: 'language_only',
+      },
+
+      // Pattern 7: "Create <filename>" mention anywhere before a code block
+      {
+        regex:
+          /(?:create|write|save|generate|make|add)\s+(?:a\s+)?(?:new\s+)?(?:file\s+)?(?:called\s+|named\s+)?[`'"]*([\/\w\-\.]+\.\w+)[`'"]*[:\s]*(?:\n[\s\S]{0,200})?\n```(\w*)\n([\s\S]*?)```/gi,
+        type: 'create_then_block',
+      },
     ];
 
     // Process each pattern in order of likelihood
@@ -123,6 +136,11 @@ export class EnhancedStreamingMessageParser extends StreamingMessageParser {
           content = args[0];
           language = pattern.regex.source.includes('json') ? 'json' : 'jsx';
           filePath = this._inferFileNameFromContent(content, language);
+        } else if (pattern.type === 'language_only') {
+          [language, content] = args;
+          filePath = this._inferFileNameFromLanguage(language, content);
+        } else if (pattern.type === 'create_then_block') {
+          [filePath, language, content] = args;
         } else {
           // file_path, explicit_create, in_filename patterns
           [filePath, language, content] = args;
@@ -298,6 +316,42 @@ ${content.trim()}
     return fileContextPatterns.some((pattern) => pattern.test(contextText));
   }
 
+  private _inferFileNameFromLanguage(language: string, content: string): string {
+    const map: Record<string, string> = {
+      html: 'index.html',
+      css: 'styles.css',
+      js: 'script.js',
+      jsx: 'App.jsx',
+      ts: 'index.ts',
+      tsx: 'App.tsx',
+      json: 'package.json',
+      vue: 'App.vue',
+      svelte: 'App.svelte',
+      py: 'main.py',
+      python: 'main.py',
+    };
+
+    const normalized = (language || '').toLowerCase().trim();
+
+    // Try component/App name first
+    const componentMatch = content.match(
+      /(?:function|class|const|export\s+default\s+function|export\s+function)\s+(\w+)/,
+    );
+
+    if (componentMatch) {
+      const name = componentMatch[1];
+      const ext = normalized === 'tsx' ? '.tsx' : normalized === 'jsx' ? '.jsx' : normalized === 'ts' ? '.ts' : '.js';
+
+      if (name.toLowerCase() === 'app') {
+        return `App${ext}`;
+      }
+
+      return `${name}${ext}`;
+    }
+
+    return map[normalized] || `file-${this._artifactCounter}.${normalized || 'txt'}`;
+  }
+
   private _inferFileNameFromContent(content: string, language: string): string {
     // Try to infer component name from content
     const componentMatch = content.match(
@@ -308,16 +362,16 @@ ${content.trim()}
       const name = componentMatch[1];
       const ext = language === 'jsx' ? '.jsx' : language === 'tsx' ? '.tsx' : '.js';
 
-      return `/components/${name}${ext}`;
+      return `${name}${ext}`;
     }
 
     // Check for App component
     if (content.includes('function App') || content.includes('const App')) {
-      return '/App.jsx';
+      return 'App.jsx';
     }
 
-    // Default to a generic name
-    return `/component-${Date.now()}.jsx`;
+    // Default to language-based inference
+    return this._inferFileNameFromLanguage(language, content);
   }
 
   private _hashBlock(content: string): string {
