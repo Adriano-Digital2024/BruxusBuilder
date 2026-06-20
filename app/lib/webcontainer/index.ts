@@ -31,7 +31,15 @@ if (!import.meta.env.SSR) {
     createSandbox(DEFAULT_PROJECT_ID).then((sandbox) => {
       webcontainerContext.loaded = true;
 
+      sessionStorage.setItem('sandbox-active', sandbox.projectId);
+
       window.addEventListener('beforeunload', () => {
+        const isRefresh = sessionStorage.getItem('sandbox-active') === sandbox.projectId;
+        if (isRefresh) {
+          // Page refresh — keep sandbox alive
+          return;
+        }
+        // Tab close — destroy sandbox
         const body = new Blob(
           [JSON.stringify({ projectId: sandbox.projectId })],
           { type: 'application/json' },

@@ -1,5 +1,5 @@
 import { atom } from 'nanostores';
-import { getSandboxPreviewUrl } from '~/lib/sandbox-service';
+import { getSandboxPreviewUrl, createSandbox } from '~/lib/sandbox-service';
 
 const DEFAULT_PROJECT_ID = 'bruxus-dev-project';
 
@@ -157,7 +157,7 @@ export class PreviewsStore {
 
   async #init() {
     try {
-      const { previewUrl } = await getSandboxPreviewUrl(this.#projectId);
+      let { previewUrl } = await getSandboxPreviewUrl(this.#projectId);
 
       if (previewUrl) {
         const previewInfo: PreviewInfo = { port: 3000, ready: true, baseUrl: previewUrl };
@@ -167,6 +167,20 @@ export class PreviewsStore {
       }
     } catch (error) {
       console.warn('[Preview] Failed to fetch sandbox preview URL:', error);
+
+      // Sandbox not found — try to recreate it
+      try {
+        const newSandbox = await createSandbox(this.#projectId);
+        this.#projectId = newSandbox.projectId;
+        const { previewUrl } = await getSandboxPreviewUrl(this.#projectId);
+        if (previewUrl) {
+          const previewInfo: PreviewInfo = { port: 3000, ready: true, baseUrl: previewUrl };
+          this.#availablePreviews.set(3000, previewInfo);
+          this.previews.set([previewInfo]);
+        }
+      } catch (recreateError) {
+        console.error('[Preview] Failed to recreate sandbox:', recreateError);
+      }
     }
   }
 

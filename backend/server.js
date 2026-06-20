@@ -34,16 +34,20 @@ try {
   daytona = null;
 }
 
-const projects = new Map();
+const PROJECT_ID_LABEL = 'projectId';
 
 async function getSandbox(projectId) {
-  const sandboxId = projects.get(projectId);
-  if (!sandboxId) return null;
   if (!daytona) return null;
   try {
-    return await daytona.get(sandboxId);
+    // Find sandbox by label instead of in-memory Map
+    for await (const sandbox of daytona.list({ labels: { [PROJECT_ID_LABEL]: projectId }, states: ['started', 'running'] })) {
+      if (sandbox.state !== 'destroyed') {
+        return sandbox;
+      }
+    }
+    return null;
   } catch (err) {
-    console.warn('Failed to get sandbox:', err.message);
+    console.warn('Failed to list sandboxes:', err.message);
     return null;
   }
 }
@@ -77,32 +81,23 @@ app.post('/api/sandbox/create', async (req, res) => {
   }
 
   try {
-    // Check if a sandbox already exists for this project
-    const existingId = projects.get(pid);
-    if (existingId) {
-      try {
-        const existing = await daytona.get(existingId);
-        if (existing && existing.state !== 'destroyed') {
-          console.log(`Reusing existing sandbox ${existingId} for project ${pid}`);
-          return res.json({
-            sandboxId: existing.id,
-            projectId: pid,
-            status: existing.state || 'started',
-            createdAt: existing.createdAt || new Date().toISOString(),
-          });
-        }
-      } catch {
-        // Existing sandbox no longer valid — remove from map and create new
-        projects.delete(pid);
-      }
+    // Check if a sandbox already exists for this project (via Daytona labels)
+    const existing = await getSandbox(pid);
+    if (existing) {
+      console.log(`Reusing existing sandbox ${existing.id} for project ${pid}`);
+      return res.json({
+        sandboxId: existing.id,
+        projectId: pid,
+        status: existing.state || 'started',
+        createdAt: existing.createdAt || new Date().toISOString(),
+      });
     }
 
     const sandbox = await daytona.create({
       language: 'typescript',
       autoStopInterval: 60,
-      labels: { projectId: pid },
+      labels: { [PROJECT_ID_LABEL]: pid },
     });
-    projects.set(pid, sandbox.id);
     console.log(`Sandbox created: ${sandbox.id} for project ${pid}`);
     res.json({
       sandboxId: sandbox.id,
@@ -167,7 +162,6 @@ app.post('/api/sandbox/destroy', async (req, res) => {
 
   if (!daytona) {
     console.log('[DUMMY destroy]', projectId);
-    projects.delete(projectId);
     return res.json({ success: true });
   }
 
@@ -177,7 +171,6 @@ app.post('/api/sandbox/destroy', async (req, res) => {
       await daytona.delete(sandbox);
       console.log(`Sandbox deleted: ${sandbox.id}`);
     }
-    projects.delete(projectId);
     res.json({ success: true });
   } catch (error) {
     console.error('Sandbox destroy failed:', error);
@@ -274,7 +267,6 @@ app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
     daytonaConfigured: !!daytona,
-    activeProjects: projects.size,
     timestamp: new Date().toISOString(),
   });
 });
