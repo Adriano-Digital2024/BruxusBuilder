@@ -36,11 +36,14 @@ try {
 
 const PROJECT_ID_LABEL = 'projectId';
 
+// Concurrency lock to prevent multiple simultaneous sandbox creations for the same project
+const sandboxCreationLocks = new Map();
+
 async function getSandbox(projectId) {
   if (!daytona) return null;
   try {
     // Find sandbox by label instead of in-memory Map
-    for await (const sandbox of daytona.list({ labels: { [PROJECT_ID_LABEL]: projectId }, states: ['started', 'running'] })) {
+    for await (const sandbox of daytona.list({ labels: { [PROJECT_ID_LABEL]: projectId }, states: ['started', 'starting', 'creating'] })) {
       if (sandbox.state !== 'destroyed') {
         return sandbox;
       }
@@ -57,28 +60,43 @@ async function getOrCreateSandbox(projectId) {
 
   const pid = projectId || 'bruxus-dev-project';
 
-  // Try to reuse an existing sandbox
-  const existing = await getSandbox(pid);
-
-  if (existing) {
-    console.log(`Reusing existing sandbox ${existing.id} for project ${pid}`);
-    return existing;
+  // If another request is already creating a sandbox for this project, wait for it
+  if (sandboxCreationLocks.has(pid)) {
+    console.log(`Waiting for existing sandbox creation for project ${pid}`);
+    return sandboxCreationLocks.get(pid);
   }
 
-  // Create a new sandbox on demand
-  try {
-    const sandbox = await daytona.create({
-      language: 'typescript',
-      autoStopInterval: 60,
-      labels: { [PROJECT_ID_LABEL]: pid },
-    });
+  const creationPromise = (async () => {
+    try {
+      // Try to reuse an existing sandbox
+      const existing = await getSandbox(pid);
 
-    console.log(`Sandbox auto-created: ${sandbox.id} for project ${pid}`);
-    return sandbox;
-  } catch (error) {
-    console.error('Failed to auto-create sandbox:', error);
-    return null;
-  }
+      if (existing) {
+        console.log(`Reusing existing sandbox ${existing.id} for project ${pid}`);
+        return existing;
+      }
+
+      // Create a new sandbox on demand
+      const sandbox = await daytona.create({
+        language: 'typescript',
+        autoStopInterval: 60,
+        labels: { [PROJECT_ID_LABEL]: pid },
+      });
+
+      console.log(`Sandbox auto-created: ${sandbox.id} for project ${pid}`);
+      return sandbox;
+    } catch (error) {
+      console.error('Failed to auto-create sandbox:', error);
+      return null;
+    } finally {
+      // Always release the lock, even on failure
+      sandboxCreationLocks.delete(pid);
+    }
+  })();
+
+  sandboxCreationLocks.set(pid, creationPromise);
+
+  return creationPromise;
 }
 
 // ── Sandbox routes ──────────────────────────────────────
