@@ -280,8 +280,23 @@ app.get('/api/sandbox/preview', async (req, res) => {
     if (!sandbox) return res.status(500).json({ success: false, error: 'Unable to get or create sandbox' });
 
     // Give nohup npm run dev a few seconds to actually start Vite before we probe the port
-    console.log(`Waiting 5s for Vite to start on sandbox ${sandbox.id}`);
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+    console.log(`Waiting 10s for Vite to start on sandbox ${sandbox.id}`);
+    await new Promise((resolve) => setTimeout(resolve, 10000));
+
+    // Diagnostic logging: read Vite logs and check port 3000
+    try {
+      const viteLogs = await sandbox.process.executeCommand('cat /tmp/vite.log 2>&1 || echo "No vite log found"');
+      console.log(`VITE LOGS for sandbox ${sandbox.id}:\n${sanitizeOutput(viteLogs.result || '')}`);
+    } catch (logErr) {
+      console.warn(`Failed to read Vite logs for sandbox ${sandbox.id}:`, logErr.message);
+    }
+
+    try {
+      const portCheck = await sandbox.process.executeCommand('ss -tlnp | grep 3000 || netstat -tlnp | grep 3000 || echo "Port 3000 not listening"');
+      console.log(`PORT 3000 CHECK for sandbox ${sandbox.id}:\n${sanitizeOutput(portCheck.result || '')}`);
+    } catch (portErr) {
+      console.warn(`Failed to check port 3000 for sandbox ${sandbox.id}:`, portErr.message);
+    }
 
     // Health check: confirm port 3000 is actually listening inside the sandbox
     const isReady = await waitForPort3000(sandbox, 15, 1000);
